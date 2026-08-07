@@ -1,0 +1,103 @@
+<h2>交互改造方向</h2>
+<p class="subtitle">对比 3 种落法：用户消息 hover、回答代码操作、图片附件预览</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">A · 推荐</div>
+        <div class="mockup-body">
+          <div class="label">User Message</div>
+          <div style="display:flex; justify-content:flex-end; gap:8px; margin-bottom:8px;">
+            <button class="mock-button">Copy</button>
+            <button class="mock-button">Edit</button>
+          </div>
+          <div class="placeholder" style="margin-bottom:10px;">中断的用户问题气泡</div>
+          <div class="label">Answer Code Actions</div>
+          <div style="display:flex; gap:8px; margin-bottom:10px;">
+            <button class="mock-button">Review</button>
+            <button class="mock-button">Rollback</button>
+          </div>
+          <div class="label">Composer Attachments</div>
+          <div style="display:flex; gap:8px; margin-bottom:8px;">
+            <div class="placeholder" style="width:72px; height:72px;">img 1 ×</div>
+            <div class="placeholder" style="width:72px; height:72px;">img 2 ×</div>
+          </div>
+          <input class="mock-input" value="Ask Pi about these images..." />
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Hover + 附件托盘</h3>
+      <p>最贴近你现在的描述：消息 hover 出操作，代码块同级加 rollback，图片在输入框上方预览并可删。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">B</div>
+        <div class="mockup-body">
+          <div class="label">User Message</div>
+          <div class="placeholder" style="margin-bottom:6px;">中断的用户问题气泡</div>
+          <div style="display:flex; gap:8px; margin-bottom:10px;">
+            <button class="mock-button">Copy</button>
+            <button class="mock-button">Edit &amp; Resend</button>
+          </div>
+          <div class="label">Answer Summary</div>
+          <div class="placeholder" style="margin-bottom:6px;">Changed 3 files</div>
+          <div style="display:flex; gap:8px; margin-bottom:10px;">
+            <button class="mock-button">Review</button>
+            <button class="mock-button">Rollback</button>
+          </div>
+          <div class="label">Composer</div>
+          <div class="placeholder" style="height:64px;">图片缩略图嵌在输入框内部顶部</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>显式动作行</h3>
+      <p>操作入口更稳定，不完全依赖 hover；但输入框内部做图片预览会更拥挤。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">C</div>
+        <div class="mockup-body">
+          <div class="split">
+            <div class="placeholder" style="min-height:160px;">时间线气泡本体更干净</div>
+            <div class="placeholder" style="min-height:160px;">右侧操作面板：Copy / Edit / Review / Rollback / 图片列表</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>右侧动作面板</h3>
+      <p>扩展性最好，但交互最重，也最偏离现在的聊天工作流。</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>我当前推荐</h3>
+  <div class="pros-cons">
+    <div class="pros">
+      <h4>A 的优点</h4>
+      <ul>
+        <li>和现有 Timeline / Composer 结构最接近</li>
+        <li>用户感知最直观，改动范围也可控</li>
+        <li>后面扩“插队引导”和多图附件也顺</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>A 要注意</h4>
+      <ul>
+        <li>hover 操作需要控制只在目标消息上出现</li>
+        <li>编辑中断问题要避免和现有 follow-up 队列打架</li>
+        <li>图片预览和粘贴/选文件的数据结构要统一</li>
+      </ul>
+    </div>
+  </div>
+</div>

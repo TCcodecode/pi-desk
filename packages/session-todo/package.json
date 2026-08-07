@@ -1,0 +1,24 @@
+{
+  "name": "@pi-desk/session-todo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "keywords": ["pi-package", "pi", "todo", "session-todo"],
+  "pi": {
+    "extensions": ["./extensions"]
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.83.0",
+    "typebox": "^1.3.7"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
+  }
+}

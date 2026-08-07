@@ -1,0 +1,21 @@
+{
+  "name": "@pi-desk/mcp-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "keywords": ["pi-desk", "mcp", "bridge"],
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.83.0",
+    "pi-mcp-adapter": "^2.21.0"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
+  }
+}

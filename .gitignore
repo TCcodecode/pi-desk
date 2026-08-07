@@ -1,0 +1,11 @@
+node_modules/
+out/
+dist/
+.DS_Store
+*.log
+.sisyphus/
+.playwright-mcp/
+.codebase-index/
+.code-index/
+.pai/
+.learnings/
