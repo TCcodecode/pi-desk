@@ -12,9 +12,9 @@ import {
 } from "./sessionTabs";
 import { getPiApi } from "../app/piApi";
 import { useAppStore } from "../session/store";
+import { applySnapshotToView, createView } from "../session/views";
 import {
   canAdmitTab,
-  canBePreview,
   isCommitted,
   isCurrentActivation,
   markCommitted,
@@ -95,13 +95,73 @@ function findLiveSessionForTab(tab: SessionTab) {
   return undefined;
 }
 
+const inflightStarts = new Map<string, Promise<unknown>>();
+
+function trackStart<T>(key: string, work: Promise<T>): Promise<T> {
+  inflightStarts.set(key, work);
+  return work.finally(() => {
+    if (inflightStarts.get(key) === work) inflightStarts.delete(key);
+  });
+}
+
+export function dropViewAndMaybeDispose(key: string): void {
+  const live = useWorkspaceStore.getState().liveSessions.find((item) => item.sessionKey === key);
+  const view = useAppStore.getState().getView(key);
+  const status = live?.status ?? view?.session.status;
+  useAppStore.getState().dropView(key);
+  if (status === "running" || status === "awaiting_approval") return;
+  void getPiApi()?.disposeSession?.(key);
+}
+
+async function loadSnapshotForTab(tab: SessionTab): Promise<PiSnapshot | undefined> {
+  const api = getPiApi();
+  const project = useAppStore.getState().projects?.find((item) => item.id === tab.projectId);
+  const cwd = project?.path ?? tab.projectId;
+  let sessionPath = tab.sessionFile;
+  if (!sessionPath && tab.sessionId && api?.listSessions) {
+    const list = await api.listSessions(cwd);
+    sessionPath = list.find((item) => item.sessionId === tab.sessionId)?.sessionFile;
+  }
+  const liveHit =
+    findLiveSessionForTab(tab) ??
+    (sessionPath ? findLiveSessionForTab({ ...tab, sessionFile: sessionPath }) : undefined);
+  if (liveHit && api?.focusSession) {
+    return api.focusSession(liveHit.sessionKey) as Promise<PiSnapshot | undefined>;
+  }
+  if (sessionPath) {
+    return api?.startSession({ cwd, sessionPath, sessionKey: tab.id });
+  }
+  return api?.startSession({ cwd, sessionKey: tab.id });
+}
+
+function patchOpenedTab(tabId: string, snap: PiSnapshot, sessionPath?: string): void {
+  const state = useAppStore.getState();
+  const patched = dedupeTabs(useWorkspaceStore.getState().tabs.map((item) => {
+    if (item.id !== tabId) return item;
+    const status = snap.session.status ?? item.status;
+    const committed =
+      item.pinned ||
+      isCommitted(item.id) ||
+      status === "running" ||
+      status === "awaiting_approval";
+    return {
+      ...item,
+      sessionId: snap.session.sessionId || item.sessionId,
+      sessionFile: snap.session.sessionFile || item.sessionFile || sessionPath,
+      title: snap.session.name?.trim() ? snap.session.name : item.title,
+      status,
+      isPreview: committed ? false : item.isPreview,
+    };
+  }), tabId);
+  useWorkspaceStore.getState().replaceWorkingSet(touchTab(patched, tabId), useWorkspaceStore.getState().activeTabId);
+  void state;
+}
+
 export async function activateTab(tabId: string): Promise<void> {
   const api = getPiApi();
-  const workspace = useWorkspaceStore.getState();
-  const tabsAfterCommit = workspace.commitActiveMeta(useAppStore.getState().session);
+  const tabsAfterCommit = useWorkspaceStore.getState().commitActiveMeta(useAppStore.getState().session);
   const tab = tabsAfterCommit.find((item) => item.id === tabId);
   if (!tab) return;
-  const activation = nextActivation();
   const previousActiveTabId = useWorkspaceStore.getState().activeTabId;
   const liveHit = findLiveSessionForTab(tab);
   if (
@@ -113,37 +173,51 @@ export async function activateTab(tabId: string): Promise<void> {
     useWorkspaceStore.getState().replaceWorkingSet(touchTab(tabsAfterCommit, tabId), tabId);
     return;
   }
+
   useWorkspaceStore.getState().setActiveTabId(tabId);
-  useWorkspaceStore.getState().setSessionLoading(true);
+  const view = useAppStore.getState().getView(tabId);
+
+  if (view?.hydrate === "ready") {
+    useAppStore.getState().bindForeground(tabId);
+    useWorkspaceStore.getState().replaceWorkingSet(touchTab(tabsAfterCommit, tabId), tabId);
+    if (findLiveSessionForTab(tab)) {
+      const activation = nextActivation();
+      void api?.focusSession?.(tabId, { includeTimeline: false }).then(async (snap) => {
+        if (!isCurrentActivation(activation)) return;
+        if (useWorkspaceStore.getState().activeTabId !== tabId) return;
+        useAppStore.getState().applyWorkspaceSnapshot(snap);
+        if (snap.session.cwd && api.listSessions) {
+          useAppStore.setState({ sessions: await api.listSessions(snap.session.cwd) });
+        }
+      }).catch((error) => {
+        pushError(error instanceof Error ? error.message : String(error));
+      });
+      return;
+    }
+    const pending = inflightStarts.get(tabId);
+    if (pending) {
+      await pending;
+      return;
+    }
+    return;
+  }
+
+  if (view?.hydrate === "loading") {
+    useAppStore.getState().bindForeground(tabId);
+    return;
+  }
+
+  const activation = nextActivation();
+  useAppStore.getState().putView(createView(tabId, { hydrate: "loading", title: tab.title }));
+  useAppStore.getState().bindForeground(tabId);
   try {
-    const project = useAppStore.getState().projects?.find((item) => item.id === tab.projectId);
-    const cwd = project?.path ?? tab.projectId;
-
-    let sessionPath = tab.sessionFile;
-    if (!sessionPath && tab.sessionId && api?.listSessions) {
-      const list = await api.listSessions(cwd);
-      sessionPath = list.find((item) => item.sessionId === tab.sessionId)?.sessionFile;
-    }
-
-    const nextLiveHit =
-      liveHit ??
-      (sessionPath
-        ? findLiveSessionForTab({ ...tab, sessionFile: sessionPath })
-        : undefined);
-
-    let snap: PiSnapshot | undefined;
-    if (nextLiveHit && api?.focusSession) {
-      snap = await api.focusSession(nextLiveHit.sessionKey) as PiSnapshot | undefined;
-    } else if (sessionPath) {
-      snap = await api?.startSession({ cwd, sessionPath, sessionKey: tabId });
-    } else {
-      snap = await api?.startSession({ cwd, sessionKey: tabId });
-    }
-    if (!isCurrentActivation(activation)) return;
+    const snap = await loadSnapshotForTab(tab);
+    const current = useAppStore.getState().getView(tabId);
+    if (!current || current.hydrate !== "loading") return;
+    if (!snap) throw new Error("Failed to load session");
     if (
-      snap &&
       !sessionBelongsToTab(
-        { ...tab, sessionFile: tab.sessionFile ?? sessionPath },
+        { ...tab, sessionFile: tab.sessionFile ?? snap.session.sessionFile },
         {
           sessionId: snap.session.sessionId,
           sessionFile: snap.session.sessionFile,
@@ -153,35 +227,26 @@ export async function activateTab(tabId: string): Promise<void> {
     ) {
       throw new Error("Loaded session does not belong to the selected tab");
     }
-    applySnapshot(snap);
-    useWorkspaceStore.getState().setSessionLoading(false);
-
-    useWorkspaceStore.getState().setActiveTabId(tabId);
-    const state = useAppStore.getState();
-    const patched = dedupeTabs(useWorkspaceStore.getState().tabs.map((item) => {
-      if (item.id !== tabId) return item;
-      const status = state.session.status ?? item.status;
-      const committed =
-        item.pinned ||
-        isCommitted(item.id) ||
-        status === "running" ||
-        status === "awaiting_approval";
-      return {
-        ...item,
-        sessionId: state.session.sessionId || item.sessionId,
-        sessionFile: state.session.sessionFile || item.sessionFile || sessionPath,
-        title: state.session.name?.trim() ? state.session.name : item.title,
-        status,
-        isPreview: committed ? false : true,
-      };
-    }), tabId);
-    useWorkspaceStore.getState().replaceWorkingSet(touchTab(patched, tabId), tabId);
-
+    useAppStore.getState().putView(applySnapshotToView(current, snap));
+    if (useWorkspaceStore.getState().activeTabId === tabId) {
+      useAppStore.getState().bindForeground(tabId);
+    }
+    patchOpenedTab(tabId, snap, tab.sessionFile);
     if (api?.listLiveSessions) {
       useWorkspaceStore.getState().setLiveSessions(await api.listLiveSessions());
     }
   } catch (error) {
-    useWorkspaceStore.getState().setSessionLoading(false);
+    const current = useAppStore.getState().getView(tabId);
+    if (current) {
+      useAppStore.getState().putView({
+        ...current,
+        hydrate: "error",
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      if (useWorkspaceStore.getState().activeTabId === tabId) {
+        useAppStore.getState().bindForeground(tabId);
+      }
+    }
     if (isCurrentActivation(activation) && useWorkspaceStore.getState().activeTabId === tabId) {
       const fallbackTabId = tabsAfterCommit.some((item) => item.id === previousActiveTabId)
         ? previousActiveTabId
@@ -195,6 +260,7 @@ export async function activateTab(tabId: string): Promise<void> {
 export async function closeWorkspaceTab(tabId: string): Promise<void> {
   const wasActive = useWorkspaceStore.getState().activeTabId === tabId;
   if (wasActive) nextActivation();
+  dropViewAndMaybeDispose(tabId);
   const result = closeTabInList(
     useWorkspaceStore.getState().tabs,
     tabId,
@@ -232,6 +298,7 @@ export async function closeWorkspaceTabs(tabIds: string[], preferredTabId?: stri
     nextActiveId = remaining[Math.min(Math.max(previousIndex, 0), remaining.length - 1)]?.id;
   }
 
+  for (const id of ids) dropViewAndMaybeDispose(id);
   useWorkspaceStore.getState().replaceWorkingSet(remaining, nextActiveId);
   useWorkspaceStore.getState().setActiveTabId(previousActiveId);
 
@@ -270,6 +337,19 @@ export async function ensureActiveTabRuntime(): Promise<string | undefined> {
   if (!tabId) return undefined;
   const tab = useWorkspaceStore.getState().tabs.find((item) => item.id === tabId);
   if (!tab) return undefined;
+  const view = useAppStore.getState().getView(tabId);
+  const pending = inflightStarts.get(tabId);
+  if (pending) {
+    await pending;
+    return tabId;
+  }
+  if (view?.hydrate === "ready" && findLiveSessionForTab(tab)) return tabId;
+  if (view?.hydrate === "loading" || (view?.hydrate === "ready" && !findLiveSessionForTab(tab))) {
+    await activateTab(tabId);
+    if (findLiveSessionForTab(useWorkspaceStore.getState().tabs.find((item) => item.id === tabId) ?? tab)) {
+      return tabId;
+    }
+  }
   if (findLiveSessionForTab(tab)) return tabId;
   await activateTab(tabId);
   const refreshed = useWorkspaceStore.getState().tabs.find((item) => item.id === tabId);
@@ -309,16 +389,29 @@ export async function startNewSession(projectId: string): Promise<void> {
     pushError(reserved.message);
     return;
   }
+  if (reserved.evicted) dropViewAndMaybeDispose(reserved.evicted.id);
   useWorkspaceStore.getState().replaceWorkingSet(reserved.tabs, reserved.activeTabId);
+  useAppStore.getState().putView(createView(sessionKey, { hydrate: "ready", title: "Untitled" }));
+  useAppStore.getState().bindForeground(sessionKey);
 
-  const started = await api?.startSession({ cwd: project.path, sessionKey });
+  const started = await trackStart(
+    sessionKey,
+    api?.startSession({ cwd: project.path, sessionKey }) ?? Promise.resolve(undefined),
+  );
   if (!isCurrentActivation(navigation)) return;
-  applySnapshot(started);
+  if (started) {
+    const current = useAppStore.getState().getView(sessionKey) ?? createView(sessionKey, { hydrate: "ready" });
+    useAppStore.getState().putView({
+      ...current,
+      session: { ...current.session, ...started.session },
+    });
+    if (useWorkspaceStore.getState().activeTabId === sessionKey) {
+      useAppStore.getState().bindForeground(sessionKey);
+    }
+  }
   await api?.newSession({ sessionKey });
   if (!isCurrentActivation(navigation)) return;
-  const snap = await api?.getSnapshot();
-  if (!isCurrentActivation(navigation)) return;
-  applySnapshot(snap);
+  const snap = started;
   if (snap) {
     const patched = patchTab(useWorkspaceStore.getState().tabs, sessionKey, {
       sessionId: snap.session.sessionId,
@@ -383,7 +476,7 @@ export async function openWorkspaceSession(
       projectId: sessionProjectId,
       title: displayTabTitle(catalogSession?.name, "Session"),
       status: catalogSession?.status,
-      isPreview: canBePreview(catalogSession?.status),
+      isPreview: false,
     },
     useWorkspaceStore.getState().activeTabId,
   );
@@ -391,23 +484,43 @@ export async function openWorkspaceSession(
     pushError(reserved.message);
     return;
   }
+  if (reserved.evicted) dropViewAndMaybeDispose(reserved.evicted.id);
   useWorkspaceStore.getState().replaceWorkingSet(reserved.tabs, reserved.activeTabId);
   if (catalogSession?.status === "running" || catalogSession?.status === "awaiting_approval") {
     markCommitted(reserved.activeTabId);
   }
 
-  useWorkspaceStore.getState().setSessionLoading(true);
+  useAppStore.getState().putView(createView(sessionKey, {
+    hydrate: "loading",
+    title: displayTabTitle(catalogSession?.name, "Session"),
+  }));
+  useAppStore.getState().bindForeground(sessionKey);
   let snap;
   try {
-    snap = await api?.startSession({ cwd, sessionPath, sessionKey });
+    snap = await trackStart(
+      sessionKey,
+      api?.startSession({ cwd, sessionPath, sessionKey }) ?? Promise.resolve(undefined),
+    );
   } catch (error) {
-    useWorkspaceStore.getState().setSessionLoading(false);
+    const current = useAppStore.getState().getView(sessionKey);
+    if (current) {
+      useAppStore.getState().putView({
+        ...current,
+        hydrate: "error",
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+    }
     pushError(error instanceof Error ? error.message : String(error));
     return;
   }
-  if (!isCurrentActivation(navigation)) return;
-  applySnapshot(snap);
-  useWorkspaceStore.getState().setSessionLoading(false);
+  if (!isCurrentActivation(navigation) && useAppStore.getState().getView(sessionKey)?.hydrate !== "loading") return;
+  const current = useAppStore.getState().getView(sessionKey);
+  if (snap && current?.hydrate === "loading") {
+    useAppStore.getState().putView(applySnapshotToView(current, snap));
+    if (useWorkspaceStore.getState().activeTabId === sessionKey) {
+      useAppStore.getState().bindForeground(sessionKey);
+    }
+  }
   if (snap) {
     const title =
       snap.session.name ||
@@ -418,7 +531,7 @@ export async function openWorkspaceSession(
       sessionFile: snap.session.sessionFile ?? sessionPath,
       title: displayTabTitle(title, "Session"),
       status: snap.session.status,
-      isPreview: canBePreview(snap.session.status),
+      isPreview: false,
     });
     if (snap.session.status === "running" || snap.session.status === "awaiting_approval") {
       markCommitted(sessionKey);
@@ -469,11 +582,14 @@ export async function deleteWorkspaceSession(sessionPath: string, projectId: str
   if (!api?.deleteSession) throw new Error("Delete is not available");
   const tab = useWorkspaceStore.getState().tabs.find((item) => item.sessionFile === sessionPath);
   await api.deleteSession(sessionPath);
-  applySnapshot(await api.getSnapshot());
   const project = useAppStore.getState().projects?.find((item) => item.id === projectId);
   await refreshSessionList(project?.path ?? projectId);
   if (tab) await closeWorkspaceTab(tab.id);
-  else useWorkspaceStore.getState().removeBySessionFile(sessionPath);
+  else {
+    useWorkspaceStore.getState().removeBySessionFile(sessionPath);
+    const stale = Object.values(useAppStore.getState().views).find((view) => view.session.sessionFile === sessionPath);
+    if (stale) dropViewAndMaybeDispose(stale.key);
+  }
 }
 
 export async function cloneWorkspaceSession(
@@ -488,10 +604,16 @@ export async function cloneWorkspaceSession(
   }
   await api.cloneSession();
   const snap = await api.getSnapshot();
-  applySnapshot(snap);
   const project = useAppStore.getState().projects?.find((item) => item.id === projectId);
   await refreshSessionList(project?.path ?? useAppStore.getState().session.cwd);
-  if (snap) syncTabFromSession(snap.session, projectId, snap.session.name);
+  if (snap) {
+    const newTabId = syncTabFromSession(snap.session, projectId, snap.session.name);
+    if (newTabId) {
+      useAppStore.getState().putView(applySnapshotToView(createView(newTabId, { hydrate: "ready" }), snap));
+      useWorkspaceStore.getState().setActiveTabId(newTabId);
+      useAppStore.getState().bindForeground(newTabId);
+    }
+  }
 }
 
 export { markCommitted };

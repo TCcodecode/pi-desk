@@ -108,7 +108,7 @@ function normalizeStoredTab(tab: SessionTab): SessionTab {
   return {
     ...tab,
     isPreview:
-      tab.pinned === true
+      tab.pinned === true || Boolean(tab.sessionFile)
         ? false
         : tab.isPreview ?? (hasLegacyMarker ? legacy.hasConversation === false : undefined),
   };

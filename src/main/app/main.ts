@@ -95,11 +95,14 @@ function registerPiIpc() {
       return { ...await piHost.start(options), sessions: await piHost.listSessions() };
     },
   );
-  ipcMain.handle("pi:focusSession", async (_event, sessionKey: string) => {
-    return { ...await piHost.focusSession(sessionKey), sessions: await piHost.listSessions() };
+  ipcMain.handle("pi:focusSession", async (_event, sessionKey: string, opts?: { includeTimeline?: boolean }) => {
+    return { ...await piHost.focusSession(sessionKey, opts), sessions: await piHost.listSessions() };
   });
   ipcMain.handle("pi:disposeSession", async (_event, sessionKey: string) => {
     await piHost.disposeSession(sessionKey);
+  });
+  ipcMain.handle("pi:loadOlder", async (_event, options: { sessionKey: string; beforeId: string; limit?: number }) => {
+    return piHost.loadOlder(options);
   });
   ipcMain.handle("pi:listLiveSessions", () => piHost.listLiveSessions());
   ipcMain.handle("pi:listProjects", () => piHost.listProjects());

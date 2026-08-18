@@ -55,13 +55,8 @@ export interface WorkspaceState {
   tabs: SessionTab[];
   activeTabId?: string;
   liveSessions: LiveSessionSummary[];
-  /** True while a tab switch is awaiting its session snapshot (guards against
-   * the welcome page flashing between the session_started event and the
-   * snapshot landing). */
-  sessionLoading: boolean;
   replaceWorkingSet: (tabs: SessionTab[], activeTabId?: string) => void;
   setActiveTabId: (activeTabId?: string) => void;
-  setSessionLoading: (loading: boolean) => void;
   setLiveSessions: (sessions: LiveSessionSummary[]) => void;
   togglePin: (tabId: string) => void;
   promote: (tabId?: string) => void;
@@ -77,7 +72,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   tabs: loaded.tabs,
   activeTabId: loaded.activeTabId,
   liveSessions: [],
-  sessionLoading: false,
 
   replaceWorkingSet(tabs, activeTabId) {
     const nextTabs = dedupeTabs(tabs, activeTabId);
@@ -91,10 +85,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setActiveTabId(activeTabId) {
     persist(get().tabs, activeTabId);
     set({ activeTabId });
-  },
-
-  setSessionLoading(sessionLoading) {
-    set({ sessionLoading });
   },
 
   setLiveSessions(liveSessions) {
@@ -179,7 +169,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         sessionFile: session.sessionFile || item.sessionFile,
         title: session.name?.trim() ? session.name : item.title,
         status,
-        isPreview: kept ? false : true,
+        isPreview: kept ? false : item.isPreview,
       };
     });
     const next = dedupeTabs(committed, tabId);
@@ -240,7 +230,7 @@ export function syncTabFromSession(
       projectId,
       title: displayTabTitle(session.name || titleHint, "Untitled"),
       status: session.status,
-      isPreview: canBePreview(session.status),
+      isPreview: session.sessionFile ? false : canBePreview(session.status),
     },
     activeTabId,
   );
@@ -253,10 +243,8 @@ export function syncTabFromSession(
 }
 
 export function alignActiveTabWithSession(session: SessionState): void {
-  const { tabs, activeTabId, replaceWorkingSet, sessionLoading } = useWorkspaceStore.getState();
-  // activateTab selects the destination tab before its snapshot arrives. Do
-  // not let metadata from the previously active session overwrite that tab.
-  if (sessionLoading) return;
+  if (!session.cwd) return;
+  const { tabs, activeTabId, replaceWorkingSet } = useWorkspaceStore.getState();
   if (!activeTabId) return;
   const current = tabs.find((item) => item.id === activeTabId);
   if (!current) return;

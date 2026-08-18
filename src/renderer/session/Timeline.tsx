@@ -62,6 +62,8 @@ export interface TimelineProps {
   scrollElementRef?: RefObject<HTMLDivElement | null>;
   /** Session run state; gates the per-turn change summary on the active turn. */
   sessionStatus?: SessionStatus;
+  hasMore?: boolean;
+  onLoadOlder?: () => void;
 }
 
 export const Timeline = memo(function Timeline({
@@ -81,6 +83,8 @@ export const Timeline = memo(function Timeline({
   onCancelInterruptedMessageEdit,
   scrollElementRef,
   sessionStatus,
+  hasMore = false,
+  onLoadOlder,
 }: TimelineProps) {
   const interruptedUserMessageIdSet = useMemo(
     () => new Set(interruptedUserMessageIds),
@@ -108,11 +112,24 @@ export const Timeline = memo(function Timeline({
     onSaveInterruptedMessageEdit,
     onCancelInterruptedMessageEdit,
   };
+  const earlier = hasMore && onLoadOlder ? (
+    <div className="timeline-load-older">
+      <button type="button" className="timeline-load-older-button" onClick={onLoadOlder}>
+        Load earlier messages
+      </button>
+    </div>
+  ) : null;
   if (scrollElementRef && turns.length >= VIRTUALIZE_MIN_TURNS) {
-    return <VirtualizedTurns turns={turns} scrollElementRef={scrollElementRef} turnProps={turnProps} activeTurnIndex={activeTurnIndex} />;
+    return (
+      <>
+        {earlier}
+        <VirtualizedTurns turns={turns} scrollElementRef={scrollElementRef} turnProps={turnProps} activeTurnIndex={activeTurnIndex} />
+      </>
+    );
   }
   return (
     <div className="timeline">
+      {earlier}
       {turns.map((turn, index) => (
         <Turn key={turn[0]?.id ?? "turn"} items={turn} {...turnProps} isActiveTurn={index === activeTurnIndex} />
       ))}

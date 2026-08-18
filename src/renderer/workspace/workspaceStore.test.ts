@@ -78,7 +78,6 @@ describe("workspaceStore", () => {
         }),
       ],
       activeTabId: "1",
-      sessionLoading: true,
     });
 
     alignActiveTabWithSession({
@@ -208,7 +207,6 @@ describe("activateTab stale generation", () => {
       tabs: pinnedTabs,
       activeTabId: "3",
       liveSessions: [],
-      sessionLoading: false,
     });
     // Reproduce the dangerous state: the foreground metadata has already
     // drifted to tab 1 while the workspace still considers tab 3 active.
@@ -302,6 +300,46 @@ describe("startNewSession and openWorkspaceSession", () => {
     expect(useWorkspaceStore.getState().tabs[0]?.projectId).toBe("/tmp/project");
   });
 
+  test("new session does not focusSession before the host slot exists", async () => {
+    const { useAppStore } = await import("../session/store");
+    const { startNewSession, activateTab, ensureActiveTabRuntime } = await import("./workspaceActions");
+    let releaseStart!: (snap: unknown) => void;
+    const startSession = vi.fn(
+      () => new Promise((resolve) => { releaseStart = resolve; }),
+    );
+    const focusSession = vi.fn(async (sessionKey: string) => {
+      throw new Error(`Unknown sessionKey: ${sessionKey}`);
+    });
+    const newSession = vi.fn(async () => undefined);
+    window.pi = {
+      startSession,
+      focusSession,
+      newSession,
+      listLiveSessions: vi.fn(async () => []),
+    } as never;
+
+    const pending = startNewSession("/tmp/project");
+    await vi.waitFor(() => {
+      expect(useWorkspaceStore.getState().tabs).toHaveLength(1);
+    });
+    const tabId = useWorkspaceStore.getState().activeTabId!;
+    const duringStart = Promise.all([activateTab(tabId), ensureActiveTabRuntime()]);
+    expect(focusSession).not.toHaveBeenCalled();
+
+    releaseStart({
+      ...useAppStore.getState(),
+      session: {
+        ...useAppStore.getState().session,
+        sessionId: "s-new",
+        cwd: "/tmp/project",
+        name: "Untitled",
+      },
+    });
+    await pending;
+    await expect(duringStart).resolves.toEqual([undefined, tabId]);
+    expect(focusSession).not.toHaveBeenCalled();
+  });
+
   test("openWorkspaceSession focuses an existing tab instead of adding another", async () => {
     const { openWorkspaceSession } = await import("./workspaceActions");
     const { activateTab } = await import("./workspaceActions");
@@ -325,13 +363,9 @@ describe("startNewSession and openWorkspaceSession", () => {
     expect(useWorkspaceStore.getState().activeTabId).toBe("existing");
   });
 
-  test("openWorkspaceSession flags sessionLoading while the snapshot is in flight", async () => {
+  test("openWorkspaceSession puts a loading view while the snapshot is in flight", async () => {
     const { openWorkspaceSession } = await import("./workspaceActions");
     const { useAppStore } = await import("../session/store");
-    const { setSessionLoading, sessionLoading } = useWorkspaceStore.getState();
-    const setLoadingSpy = vi.spyOn({ setSessionLoading }, "setSessionLoading");
-    void setLoadingSpy;
-    void sessionLoading;
 
     let resolveStart!: (snap: unknown) => void;
     const startSession = vi.fn(
@@ -343,9 +377,7 @@ describe("startNewSession and openWorkspaceSession", () => {
     } as never;
 
     const pending = openWorkspaceSession("/tmp/new.jsonl", "/tmp/project");
-    // Before the snapshot resolves, the switch is flagged as loading so the
-    // welcome page does not flash between session_started and the snapshot.
-    expect(useWorkspaceStore.getState().sessionLoading).toBe(true);
+    expect(useAppStore.getState().views["file:/tmp/new.jsonl"]?.hydrate).toBe("loading");
 
     resolveStart({
       ...useAppStore.getState(),
@@ -359,7 +391,7 @@ describe("startNewSession and openWorkspaceSession", () => {
     });
     await pending;
 
-    expect(useWorkspaceStore.getState().sessionLoading).toBe(false);
+    expect(useAppStore.getState().views["file:/tmp/new.jsonl"]?.hydrate).toBe("ready");
   });
 });
 

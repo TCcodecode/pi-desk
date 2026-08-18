@@ -54,6 +54,7 @@ function makeFakeApi() {
     }),
     focusSession: vi.fn(async () => useAppStore.getState()),
     disposeSession: vi.fn(async () => undefined),
+    loadOlder: vi.fn(async () => ({ items: [], hasMore: false })),
     listLiveSessions: vi.fn(async () => []),
     prompt: vi.fn(async (text: string) => {
       listeners.forEach((listener) =>
@@ -167,7 +168,7 @@ describe("Pi Desktop end-to-end send flow", () => {
     fireEvent.change(screen.getByRole("textbox", { name: /message/i }), { target: { value: "inspect the tests" } });
     fireEvent.click(screen.getByRole("button", { name: /send/i }));
 
-    await waitFor(() => expect(api.startSession).toHaveBeenCalledWith({ cwd: "/tmp/project" }));
+    await waitFor(() => expect(api.startSession).toHaveBeenCalledWith({ cwd: "/tmp/project", sessionKey: expect.any(String) }));
     await waitFor(() =>
       expect(api.prompt).toHaveBeenCalledWith("inspect the tests", expect.objectContaining({ sessionKey: expect.any(String) })),
     );
@@ -396,15 +397,16 @@ describe("Pi Desktop end-to-end send flow", () => {
     );
     await waitFor(() => {
       const saved = JSON.parse(localStorage.getItem("pi.openTabs") ?? "{}");
-      expect(saved.tabs?.[0]).toMatchObject({ id: "tab-history", isPreview: true });
+      expect(saved.tabs?.[0]).toMatchObject({ id: "tab-history", isPreview: false });
     });
 
     fireEvent.keyDown(window, { key: "n", metaKey: true });
     await waitFor(() => expect(api.newSession).toHaveBeenCalledWith({ sessionKey: expect.any(String) }));
     await waitFor(() => {
       const saved = JSON.parse(localStorage.getItem("pi.openTabs") ?? "{}");
-      expect(saved.tabs).toHaveLength(1);
-      expect(saved.tabs[0]?.id).not.toBe("tab-history");
+      expect(saved.tabs).toHaveLength(2);
+      expect(saved.tabs.some((tab: { id: string }) => tab.id === "tab-history")).toBe(true);
+      expect(saved.tabs.some((tab: { isPreview?: boolean }) => tab.isPreview === true)).toBe(true);
     });
 
     delete (window as unknown as { pi?: PiApi }).pi;

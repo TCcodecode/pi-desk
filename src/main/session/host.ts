@@ -74,7 +74,7 @@ import { normalizeAuthEvent, normalizeAuthSource } from "./auth.js";
 import { messageText as formatMessageText, modelName as formatModelName, resolveDisplayName as formatSessionName, resolvePathsEqual, stringify as formatUnknown } from "./display.js";
 import { handleSessionEvent } from "./events.js";
 import { createSdkRuntime as createSdkRuntimeSession } from "./runtime.js";
-import { buildSnapshot } from "./snapshot.js";
+import { buildSnapshot, loadOlderItems } from "./snapshot.js";
 import type {
   AuthModelRuntimeFactory,
   PiEventListener,
@@ -267,14 +267,24 @@ export class PiHost {
     return this.snapshot();
   }
 
-  async focusSession(sessionKey: SessionKey): Promise<PiSnapshot> {
+  async focusSession(sessionKey: SessionKey, opts?: { includeTimeline?: boolean }): Promise<PiSnapshot> {
     const slot = this.slots.get(sessionKey);
     if (!slot) throw new Error(`Unknown sessionKey: ${sessionKey}`);
     this.foregroundKey = sessionKey;
     this.workspaceCwd = slot.runtime.cwd;
     addProject(slot.runtime.cwd);
     setActiveProject(slot.runtime.cwd);
-    return this.snapshot();
+    return this.snapshot({ includeTimeline: opts?.includeTimeline });
+  }
+
+  async loadOlder(options: {
+    sessionKey: SessionKey;
+    beforeId: string;
+    limit?: number;
+  }): Promise<{ items: TimelineItem[]; hasMore: boolean }> {
+    const slot = this.slots.get(options.sessionKey);
+    if (!slot) throw new Error(`Unknown sessionKey: ${options.sessionKey}`);
+    return loadOlderItems(slot.runtime.session, options.beforeId, options.limit);
   }
 
   isForegroundSession(sessionKey?: SessionKey): boolean {
@@ -1208,7 +1218,7 @@ export class PiHost {
     return this.requireRuntime().importFromJsonl(path, cwdOverride);
   }
 
-  snapshot(): PiSnapshot {
+  snapshot(opts?: { includeTimeline?: boolean; tailTurns?: number }): PiSnapshot {
     return buildSnapshot({
       workspaceId: this.workspaceId,
       workspaceCwd: this.workspaceCwd,
@@ -1219,6 +1229,8 @@ export class PiHost {
       resources: this.getResources(),
       models: this.getModels(),
       tools: this.getTools(),
+      includeTimeline: opts?.includeTimeline,
+      tailTurns: opts?.tailTurns,
     });
   }
 

@@ -9,3 +9,9 @@ dist/
 .code-index/
 .pai/
 .learnings/
+docs/superpowers
+docs/superpowers/**
+.superpowers
+.superpowers/**
+**/.superpowers
+**/.superpowers/**

@@ -1323,6 +1323,30 @@ describe("PiHost", () => {
     expect(host.listLiveSessions()).toHaveLength(2);
   });
 
+  test("focusSession({ includeTimeline: false }) skips timeline hydrate", async () => {
+    const history = [
+      { role: "user", id: "u0", content: "hello" },
+      { role: "assistant", id: "a0", content: "world" },
+    ];
+    const host = new PiHost({
+      workspaceId: "workspace-1",
+      runtimeFactory: async (opts) => {
+        const fake = createFakeRuntime(opts.cwd, history);
+        fake.session.sessionFile = opts.sessionPath;
+        fake.session.sessionId = "sid-a";
+        fake.runtime.cwd = opts.cwd;
+        return fake.runtime;
+      },
+    });
+    await host.start({ cwd: "/p", sessionPath: "/tmp/a.jsonl", sessionKey: "file:/tmp/a.jsonl" });
+    const full = await host.focusSession("file:/tmp/a.jsonl");
+    expect(full.timeline.length).toBeGreaterThan(0);
+    const light = await host.focusSession("file:/tmp/a.jsonl", { includeTimeline: false });
+    expect(light.timeline).toEqual([]);
+    expect(light.session.sessionId).toBe(full.session.sessionId);
+    expect(light.resources).toBeDefined();
+  });
+
   test("multi-session: disposeSession removes one slot only", async () => {
     const host = new PiHost({
       workspaceId: "workspace-1",

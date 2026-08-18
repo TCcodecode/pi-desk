@@ -1,0 +1,64 @@
+import { describe, expect, test } from "vitest";
+import { applyEventToView, applySnapshotToView, createView, remapViewKey } from "./views";
+import { createInitialState } from "./reduce";
+import type { PiEvent } from "../../shared/protocol";
+
+function started(key: string): PiEvent {
+  return {
+    type: "session_started",
+    sessionKey: key,
+    eventId: "e1",
+    workspaceId: "local",
+    timestamp: new Date().toISOString(),
+    sequence: 1,
+    payload: { sessionId: "s1", cwd: "/tmp/a", sessionName: "A" },
+  };
+}
+
+describe("SessionView", () => {
+  test("session_started does not create a view", () => {
+    expect(applyEventToView(undefined, started("k"))).toBeUndefined();
+  });
+
+  test("session_started on a loading view only patches the session head", () => {
+    const view = createView("k", { hydrate: "loading", title: "A" });
+    view.timeline = [{ id: "keep", kind: "user", content: "x", status: "completed" }];
+    const next = applyEventToView(view, started("k"));
+    expect(next?.hydrate).toBe("loading");
+    expect(next?.timeline).toEqual(view.timeline);
+    expect(next?.session.sessionId).toBe("s1");
+    expect(next?.session.cwd).toBe("/tmp/a");
+  });
+
+  test("session_started on a ready empty view stays ready and empty", () => {
+    const view = createView("k", { hydrate: "ready" });
+    const next = applyEventToView(view, started("k"));
+    expect(next?.hydrate).toBe("ready");
+    expect(next?.timeline).toEqual([]);
+  });
+
+  test("applySnapshotToView marks ready and records oldestId", () => {
+    const view = createView("k", { hydrate: "loading" });
+    const snap = {
+      ...createInitialState(),
+      session: { ...createInitialState().session, sessionId: "s1", name: "A" },
+      timeline: [
+        { id: "t0", kind: "user" as const, content: "old", status: "completed" as const },
+        { id: "t1", kind: "user" as const, content: "new", status: "completed" as const },
+      ],
+      timelineHasMore: true,
+    };
+    const next = applySnapshotToView(view, snap);
+    expect(next.hydrate).toBe("ready");
+    expect(next.hasMore).toBe(true);
+    expect(next.oldestId).toBe("t0");
+    expect(next.timeline).toHaveLength(2);
+  });
+
+  test("remapViewKey moves the view", () => {
+    const views = { tmp: createView("tmp", { hydrate: "ready" }) };
+    const next = remapViewKey(views, "tmp", "file:/x.jsonl");
+    expect(next.tmp).toBeUndefined();
+    expect(next["file:/x.jsonl"]?.key).toBe("file:/x.jsonl");
+  });
+});

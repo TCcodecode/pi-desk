@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { App } from "./App";
 import { createInitialState, useAppStore } from "../session/store";
+import { createView } from "../session/views";
 import { useWorkspaceStore } from "../workspace/workspaceStore";
 
 vi.mock("./piApi", () => ({
@@ -72,19 +73,13 @@ describe("App shell", () => {
   });
 
   test("tab switch shows a loading state instead of flashing the welcome page", () => {
-    // Session switching: active tab changed, snapshot not applied yet —
-    // timeline is empty (cleared by session_started) and sessionLoading is on.
-    useWorkspaceStore.setState({ sessionLoading: true, activeTabId: "tabB" });
-    renderApp({ session: { ...createInitialState().session, sessionId: "sB" } });
+    useWorkspaceStore.setState({ activeTabId: "tabB" });
+    renderApp({
+      session: { ...createInitialState().session, sessionId: "sB" },
+      views: { tabB: createView("tabB", { hydrate: "loading", title: "B" }) },
+    });
 
     expect(screen.getByText("Loading session…")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Open a project" })).not.toBeInTheDocument();
-
-    // Snapshot lands: loading off → normal welcome (empty session) or content.
-    act(() => {
-      useWorkspaceStore.setState({ sessionLoading: false });
-    });
-    expect(screen.queryByText("Loading session…")).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Open a project" })).toBeInTheDocument();
   });
 });

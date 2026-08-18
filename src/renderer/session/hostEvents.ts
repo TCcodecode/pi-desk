@@ -1,9 +1,8 @@
 import type { PiApi, PiEvent, SessionStatus } from "../../shared/protocol";
-import { applySnapshot } from "../workspace/workspaceActions";
 import {
-  canBePreview,
   useWorkspaceStore,
 } from "../workspace/workspaceStore";
+import { activateTab } from "../workspace/workspaceActions";
 import {
   ensureInWorkingSet,
   findRestorableTab,
@@ -59,11 +58,6 @@ export function subscribeHostEvents(
 
     const key = event.sessionKey;
     const isSessionScoped = SESSION_SCOPED_EVENT_TYPES.has(event.type);
-    const activeSessionId = useAppStore.getState().session.sessionId;
-    const isActiveSession =
-      !key ||
-      key === useWorkspaceStore.getState().activeTabId ||
-      Boolean(event.sessionId && event.sessionId === activeSessionId);
 
     if (
       event.type === "user_message_created" ||
@@ -73,7 +67,7 @@ export function subscribeHostEvents(
       options.promoteTab(key);
     }
 
-    if (key && isSessionScoped && !isActiveSession) {
+    if (key && isSessionScoped) {
       if (event.type === "agent_started" || event.type === "turn_started") {
         options.patchTabStatus(key, "running");
       } else if (event.type === "turn_completed" || event.type === "session_completed") {
@@ -87,10 +81,6 @@ export function subscribeHostEvents(
           ...(event.payload.sessionFile ? { sessionFile: event.payload.sessionFile } : {}),
         });
       }
-      void api.listLiveSessions?.().then((list) => {
-        if (active) useWorkspaceStore.getState().setLiveSessions(list);
-      });
-      return;
     }
 
     useAppStore.getState().applyEvent(event);
@@ -98,13 +88,13 @@ export function subscribeHostEvents(
 
   void api.getSnapshot().then(async (snapshot) => {
     if (!active) return;
-    useAppStore.getState().replaceSnapshot(snapshot);
+    useAppStore.getState().applyWorkspaceSnapshot(snapshot);
     const projects = await api.listProjects?.();
     if (projects && active) {
       const activeProjectId = snapshot.activeProjectId ?? projects[0]?.id;
       useAppStore.setState({ projects, activeProjectId });
       const project = projects.find((item) => item.id === activeProjectId);
-      if (project && api.listSessions && api.startSession) {
+      if (project && api.listSessions) {
         const list = await api.listSessions(project.path);
         if (!active) return;
         useAppStore.setState({ sessions: list });
@@ -125,28 +115,21 @@ export function subscribeHostEvents(
             "id" in preferred && preferred.id
               ? preferred.id
               : `file:${preferred.sessionFile}`;
-          const snap = await api.startSession({
-            cwd: project.path,
-            sessionPath: preferred.sessionFile,
-            sessionKey,
-          });
-          if (!active) return;
-          applySnapshot(snap);
           const next = ensureInWorkingSet(
             saved.tabs.length ? saved.tabs : [],
             {
               id: sessionKey,
-              sessionId: snap.session.sessionId || preferred.sessionId,
-              sessionFile: snap.session.sessionFile ?? preferred.sessionFile,
+              sessionId: preferred.sessionId,
+              sessionFile: preferred.sessionFile,
               projectId: project.id,
-              title: snap.session.name || preferred.title || "Untitled",
-              status: snap.session.status,
-              isPreview: canBePreview(snap.session.status),
+              title: preferred.title || "Untitled",
+              isPreview: false,
             },
             sessionKey,
           );
           if (next.ok) {
             useWorkspaceStore.getState().replaceWorkingSet(next.tabs, next.activeTabId);
+            await activateTab(sessionKey);
           }
         }
       }

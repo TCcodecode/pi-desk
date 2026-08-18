@@ -2460,6 +2460,17 @@ input[type="checkbox"]:focus-visible {
 .live-composer { margin-bottom: 0; }
 .send-button.stop { color: var(--text-primary); background: var(--surface-hover); }
 .timeline { display: flex; flex-direction: column; gap: 3px; width: 100%; min-width: 0; padding: 2px 0 12px; }
+.timeline-load-older { display: flex; justify-content: center; padding: 8px 0 12px; }
+.timeline-load-older-button {
+  border: 1px solid var(--border-subtle, var(--swatch-d8cba6));
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
 .timeline.is-virtualized { display: block; padding-bottom: 12px; }
 .timeline-virtual-item { padding-bottom: 6px; }
 .timeline-empty { display: grid; place-items: center; padding: 50px 0; color: var(--text-secondary); text-align: center; }

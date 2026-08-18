@@ -4,6 +4,19 @@ import type { TimelineItem } from "../../shared/protocol";
 import { Timeline } from "./Timeline";
 
 describe("Timeline", () => {
+  test("shows Load earlier when hasMore is set", () => {
+    const onLoadOlder = vi.fn();
+    render(
+      <Timeline
+        items={[{ id: "u1", kind: "user", content: "hello", status: "completed" }]}
+        hasMore
+        onLoadOlder={onLoadOlder}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /earlier/i }));
+    expect(onLoadOlder).toHaveBeenCalled();
+  });
+
   test("shows a file change summary below the edited turn", () => {
     const onReviewChanges = vi.fn();
     const items: TimelineItem[] = [

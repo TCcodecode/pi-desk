@@ -16,6 +16,7 @@ import { useDragResize } from "../ui/useDragResize";
 import { useLocalStorageState } from "../ui/useLocalStorageState";
 import { getPiApi } from "./piApi";
 import { useAppStore } from "../session/store";
+import { prependOlder } from "../session/views";
 import type { InspectorTab } from "../session/ResourceInspector";
 import type { AgentMode, AgentProfile, AppUpdateState, SessionModeState, SessionStatus } from "../../shared/protocol";
 import {
@@ -32,6 +33,7 @@ import {
   useWorkspaceStore,
 } from "../workspace/workspaceStore";
 import {
+  activateTab,
   applySnapshot,
   ensureActiveTabRuntime,
   requestNewSession as requestWorkspaceSession,
@@ -104,7 +106,7 @@ export function App() {
   }, [motionEnabled]);
   const activeTabId = useWorkspaceStore((item) => item.activeTabId);
   const liveSessions = useWorkspaceStore((item) => item.liveSessions);
-  const sessionLoading = useWorkspaceStore((item) => item.sessionLoading);
+  const activeView = useAppStore((item) => (activeTabId ? item.views[activeTabId] : undefined));
   const [editingInterruptedMessage, setEditingInterruptedMessage] = useState<EditingInterruptedMessage>(null);
   const [savingInterruptedMessageEdit, setSavingInterruptedMessageEdit] = useState(false);
   const sessionChanges = useMemo(() => collectFileChanges(state.timeline), [state.timeline]);
@@ -354,7 +356,8 @@ export function App() {
       }
       const cwd = await api?.chooseWorkspace();
       if (!cwd) return false;
-      const snap = await api?.startSession({ cwd });
+      const sessionKey = `tmp:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const snap = await api?.startSession({ cwd, sessionKey });
       applySnapshot(snap);
       if (snap) syncTabFromSession(snap.session, cwd, snap.session.name);
       return true;
@@ -393,7 +396,9 @@ export function App() {
     }
 
     try {
-      applySnapshot(await api?.startSession({ cwd }));
+      const sessionKey = useWorkspaceStore.getState().activeTabId
+        ?? `tmp:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      applySnapshot(await api?.startSession({ cwd, sessionKey }));
       return Boolean(useAppStore.getState().session.sessionId);
     } catch (error) {
       pushError(error instanceof Error ? error.message : String(error));
@@ -583,10 +588,8 @@ export function App() {
       const sessionKey = await ensureActiveTabRuntime();
       const next = await setMode(mode, sessionKey ? { sessionKey } : undefined);
       applyModeState(next);
-      // Mode changes alter the active tool policy as well as the model
-      // profile. Refresh so Inspector never renders stale tool switches.
       const snapshot = await api.getSnapshot();
-      useAppStore.getState().replaceSnapshot(snapshot);
+      useAppStore.getState().applyWorkspaceSnapshot(snapshot);
     })().catch((error) => pushError(error instanceof Error ? error.message : String(error)));
   };
   const changeAgentModel = (model: string): void => {
@@ -643,11 +646,35 @@ export function App() {
     setWorkspaceMode(mode);
   };
 
+  const loadOlderArmedRef = useRef(true);
+  const loadOlderForActive = async (): Promise<void> => {
+    const key = useWorkspaceStore.getState().activeTabId;
+    const view = key ? useAppStore.getState().getView(key) : undefined;
+    if (!key || !view?.hasMore || !view.oldestId || view.loadingOlder) return;
+    useAppStore.getState().putView({ ...view, loadingOlder: true });
+    try {
+      const page = await api?.loadOlder?.({ sessionKey: key, beforeId: view.oldestId });
+      const latest = useAppStore.getState().getView(key);
+      if (!latest || !page) return;
+      const hasMore = page.items.length > 0 && page.hasMore;
+      useAppStore.getState().putView(prependOlder(latest, page.items, hasMore));
+      if (useWorkspaceStore.getState().activeTabId === key) {
+        useAppStore.getState().bindForeground(key);
+      }
+    } catch (error) {
+      const latest = useAppStore.getState().getView(key);
+      if (latest) useAppStore.getState().putView({ ...latest, loadingOlder: false });
+      pushError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   const planConversation = state.timeline.length > 0 ? (
     <Timeline
       items={state.timeline}
       scrollElementRef={timelineWrapRef}
       sessionStatus={state.session.status}
+      hasMore={activeView?.hasMore}
+      onLoadOlder={() => void loadOlderForActive()}
       onReviewChanges={openChanges}
       reviewOpen={inspectorOpen && rightPane === "changes"}
       selectedReviewPath={selectedChangePath}
@@ -699,10 +726,15 @@ export function App() {
       <div className="http-agent-timeline">
         {state.timeline.length > 0 ? (
           planConversation
-        ) : sessionLoading ? (
+        ) : activeView?.hydrate === "loading" ? (
           <div className="session-loading" role="status">
             <span className="session-loading-dot" aria-hidden />
             Loading session…
+          </div>
+        ) : activeView?.hydrate === "error" ? (
+          <div className="session-loading" role="alert">
+            <p>{activeView.errorMessage ?? "Failed to open session"}</p>
+            <button type="button" onClick={() => activeTabId && void activateTab(activeTabId)}>Retry</button>
           </div>
         ) : (
           <div className="http-chat-empty"><AppIcon name="messageSquare" size="lg" /><p>Ask the Agent to create, review, or explain a test in this Project.</p></div>
@@ -797,15 +829,25 @@ export function App() {
             const atBottom = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 80;
             stickToBottomRef.current = atBottom;
             setScrolledFromBottom(!atBottom);
+            if (wrap.scrollTop >= 80) loadOlderArmedRef.current = true;
+            if (wrap.scrollTop < 80 && activeView?.hasMore && loadOlderArmedRef.current) {
+              loadOlderArmedRef.current = false;
+              void loadOlderForActive();
+            }
           }}
         >
           <div className="chat-column">
             {state.timeline.length > 0 ? (
               planConversation
-            ) : sessionLoading ? (
+            ) : activeView?.hydrate === "loading" ? (
               <div className="session-loading" role="status">
                 <span className="session-loading-dot" aria-hidden />
                 Loading session…
+              </div>
+            ) : activeView?.hydrate === "error" ? (
+              <div className="session-loading" role="alert">
+                <p>{activeView.errorMessage ?? "Failed to open session"}</p>
+                <button type="button" onClick={() => activeTabId && void activateTab(activeTabId)}>Retry</button>
               </div>
             ) : (
               <WelcomeBlock
@@ -883,7 +925,7 @@ export function App() {
                 const sessionKey = await ensureActiveTabRuntime();
                 await api.setTools(names, sessionKey ? { sessionKey } : undefined);
                 const snapshot = await api.getSnapshot();
-                useAppStore.getState().replaceSnapshot(snapshot);
+                useAppStore.getState().applyWorkspaceSnapshot(snapshot);
               })().catch((error) => pushError(error instanceof Error ? error.message : String(error)));
             }}
             onToggleSkills={(patterns) => void api?.setSkills(patterns)}
@@ -914,7 +956,8 @@ export function App() {
           // Reload (and other state-mutating commands) change main-process
           // resources (extensions/skills/prompts). Re-pull the snapshot so
           // the inspector reflects them without an app restart.
-          applySnapshot(await api?.getSnapshot());
+          const snapshot = await api?.getSnapshot();
+          if (snapshot) useAppStore.getState().applyWorkspaceSnapshot(snapshot);
         }}
       />
       <SettingsDialog

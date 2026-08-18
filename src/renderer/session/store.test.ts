@@ -3,6 +3,8 @@ import type { IndexStatus } from "@pi-desk/code-index";
 import {
   createInitialState,
   reducePiEvent,
+} from "./reduce";
+import {
   useAppStore,
   type PiEvent,
 } from "./store";

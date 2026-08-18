@@ -108,6 +108,8 @@ export type TimelineItem =
       output?: string;
       status: "running" | "completed" | "error";
       change?: FileChangeSummary;
+      /** UI snapshot clipped the input/output text. Never set on `change`. */
+      truncated?: boolean;
       /** Id of the in-progress todo this trace row belongs to, if any. */
       taskId?: string;
       /** Event time from the host; absent for older persisted sessions. */

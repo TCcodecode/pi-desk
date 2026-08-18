@@ -317,22 +317,33 @@ describe("working set limit", () => {
     expect(r.activeTabId).not.toBe(preview.id);
   });
 
-  test("migrates legacy unmarked tabs into one preview slot", () => {
+  test("loadOpenTabs forces sessionFile tabs out of preview", () => {
     localStorage.setItem(
       "pi.openTabs",
       JSON.stringify({
         tabs: [
-          { ...tab(1, false, 10), id: "legacy-a" },
-          { ...tab(2, false, 20), id: "legacy-b" },
+          { ...tab(1, false, 10), id: "legacy-a", isPreview: true },
+          { ...tab(2, false, 20), id: "legacy-b", isPreview: true },
         ],
         activeTabId: "legacy-b",
       }),
     );
 
     const loaded = loadOpenTabs();
-    expect(loaded.tabs.map((item) => item.id)).toEqual(["legacy-b"]);
-    expect(loaded.tabs[0]?.isPreview).toBe(true);
+    expect(loaded.tabs.map((item) => item.id).sort()).toEqual(["legacy-a", "legacy-b"]);
+    expect(loaded.tabs.every((item) => item.isPreview === false)).toBe(true);
     localStorage.removeItem("pi.openTabs");
+  });
+
+  test("two historical opens both stay and neither is preview", () => {
+    const first = ensureInWorkingSet([], { ...tab(1), isPreview: false }, undefined, 1);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const second = ensureInWorkingSet(first.tabs, { ...tab(2), isPreview: false }, first.activeTabId, 2);
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(second.tabs.map((item) => item.title).sort()).toEqual(["T1", "T2"]);
+    expect(second.tabs.every((item) => item.isPreview !== true)).toBe(true);
   });
 
   test("keeps a pinned tab out of preview replacement", () => {
