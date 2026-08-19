@@ -1211,6 +1211,14 @@ session title below */
 }
 .topbar-button:hover .topbar-kbd { border-color: var(--border-subtle); color: var(--text-primary); background: var(--surface-elevated); }
 /* Full-width scroll surface so the scrollbar sits on the main column's right edge. */
+.timeline-stage {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  flex-direction: column;
+}
 .timeline-wrap {
   position: relative;
   flex: 1 1 auto;
@@ -1218,6 +1226,30 @@ session title below */
   width: 100%;
   overflow-x: hidden;
   overflow-y: auto;
+}
+.timeline-jump-latest {
+  position: absolute;
+  z-index: var(--z-floating);
+  left: 50%;
+  bottom: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-primary);
+  background: var(--surface-elevated);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--swatch-000000) 18%, transparent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.timeline-jump-latest:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
 }
 .timeline-wrap.is-empty {
   display: flex;
@@ -3969,6 +4001,7 @@ intentionally separate from the project source tree. */
 
  .app-shell,
 .main-column,
+.timeline-stage,
 .timeline-wrap,
 .chat-column,
 .composer-dock {

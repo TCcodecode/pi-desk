@@ -364,7 +364,7 @@ describe("PiHost", () => {
     await expect(host.prompt("inspect the project")).rejects.toThrow("no model selected");
   });
 
-  test("normalizes Pi session events and preserves the raw event", () => {
+  test("normalizes Pi session events without cloning the raw SDK payload", () => {
     const fake = createFakeRuntime();
     const host = new PiHost({ workspaceId: "workspace-1", runtime: fake.runtime });
     const events: unknown[] = [];
@@ -374,9 +374,10 @@ describe("PiHost", () => {
     fake.emit({ type: "tool_execution_start", toolCallId: "tool-1", toolName: "bash", args: { command: "pwd" } });
 
     expect(events).toEqual([
-      expect.objectContaining({ type: "assistant_message_started", raw: expect.objectContaining({ type: "message_start" }) }),
+      expect.objectContaining({ type: "assistant_message_started" }),
       expect.objectContaining({ type: "tool_call_started", payload: expect.objectContaining({ toolCallId: "tool-1", toolName: "bash" }) }),
     ]);
+    expect(events.every((event) => !("raw" in (event as object) && (event as { raw?: unknown }).raw))).toBe(true);
   });
 
   test("includes the session name when an agent finishes", () => {
@@ -1321,6 +1322,26 @@ describe("PiHost", () => {
     await host.focusSession("file:/tmp/a.jsonl");
     expect(host.snapshot().session.sessionFile).toBe("/tmp/a.jsonl");
     expect(host.listLiveSessions()).toHaveLength(2);
+  });
+
+  test("previewSession reads a file tail without creating a live slot", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "pi-preview-"));
+    const sessionPath = join(dir, "chat.jsonl");
+    const entries = [
+      { type: "session", version: 3, id: "sid-preview", timestamp: "2026-01-01T00:00:00.000Z", cwd: "/p" },
+      { type: "message", id: "u0", parentId: null, timestamp: "2026-01-01T00:00:01.000Z", message: { role: "user", content: "hello", id: "u0" } },
+      { type: "message", id: "a0", parentId: "u0", timestamp: "2026-01-01T00:00:02.000Z", message: { role: "assistant", content: "hi", id: "a0" } },
+    ];
+    writeFileSync(sessionPath, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+    const host = new PiHost({ workspaceId: "workspace-1" });
+    const snap = host.previewSession({ cwd: "/p", sessionPath });
+    expect(snap.preview).toBe(true);
+    expect(snap.session.sessionId).toBe("sid-preview");
+    expect(snap.timeline.some((item) => item.kind === "user")).toBe(true);
+    expect(host.listLiveSessions()).toHaveLength(0);
   });
 
   test("focusSession({ includeTimeline: false }) skips timeline hydrate", async () => {

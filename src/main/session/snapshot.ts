@@ -1,8 +1,9 @@
 import { getActiveProjectId, listProjects } from "../workspace/projectCatalog.js";
-import { createFileChangeSummaryFromPatch, filePathFromToolInput } from "./fileChanges.js";
-import { messageText, modelName, resolveDisplayName, stringify } from "./display.js";
+import { createFileChangeSummaryFromPatch, filePathFromToolArgs } from "./fileChanges.js";
+import { clipText, clipUnknown, messageText, modelName, resolveDisplayName } from "./display.js";
 import type { PiRuntimeLike, PiSessionLike } from "./types.js";
 import type {
+  FileChangeSummary,
   ModelOption,
   PiSnapshot,
   ResourceSnapshot,
@@ -15,165 +16,231 @@ import type {
 } from "../../shared/protocol.js";
 
 const DEFAULT_TAIL_TURNS = 30;
-const TOOL_TEXT_LIMIT = 8 * 1024;
 
 export function clipToolText(text: string): { text: string; truncated: boolean } {
-  if (text.length <= TOOL_TEXT_LIMIT) return { text, truncated: false };
-  return { text: text.slice(0, TOOL_TEXT_LIMIT), truncated: true };
+  return clipText(text);
 }
 
-function takeTailTurns(items: TimelineItem[], tailTurns: number): TimelineItem[] {
-  if (!Number.isFinite(tailTurns)) return items;
-  if (tailTurns <= 0) return [];
-  const userIndexes = items.flatMap((item, index) => item.kind === "user" ? [index] : []);
-  if (userIndexes.length <= tailTurns) return items;
-  return items.slice(userIndexes[userIndexes.length - tailTurns]!);
-}
+type RawMessage = {
+  role?: string;
+  id?: string;
+  content?: unknown;
+  toolCallId?: string;
+  toolName?: string;
+  isError?: boolean;
+  details?: unknown;
+  command?: string;
+  output?: string;
+  exitCode?: number;
+};
 
-export function hydrateAllTurns(session?: PiSessionLike): TimelineItem[] {
-  let messages = (session?.messages ?? []) as Array<Record<string, unknown>>;
+function sessionMessages(session?: PiSessionLike): RawMessage[] {
+  let messages = (session?.messages ?? []) as RawMessage[];
   if (messages.length === 0) {
     const manager = session?.sessionManager as { buildSessionContext?: () => { messages?: unknown[] } } | undefined;
-    messages = (manager?.buildSessionContext?.().messages ?? []) as Array<Record<string, unknown>>;
-  }
-
-  const items: TimelineItem[] = [];
-  const toolPaths = new Map<string, string>();
-  for (const [index, raw] of messages.entries()) {
-    const message = raw as {
-      role?: string;
-      id?: string;
-      content?: unknown;
-      toolCallId?: string;
-      toolName?: string;
-      isError?: boolean;
-      details?: unknown;
-      command?: string;
-      output?: string;
-      exitCode?: number;
-    };
-    const baseId = message.id ?? `hist-${index}`;
-    const role = message.role ?? "";
-
-    if (role === "user") {
-      const content = messageText(message);
-      if (content.trim()) items.push({ id: baseId, kind: "user", content, status: "completed" });
-      continue;
-    }
-
-    if (role === "assistant") {
-      const parts = Array.isArray(message.content) ? message.content : undefined;
-      if (!parts) {
-        const content = messageText(message);
-        if (content.trim()) items.push({ id: baseId, kind: "assistant", content, status: "completed" });
-        continue;
-      }
-      for (const [partIndex, part] of parts.entries()) {
-        if (typeof part === "string") {
-          if (part.trim()) items.push({ id: `${baseId}-text-${partIndex}`, kind: "assistant", content: part, status: "completed" });
-          continue;
-        }
-        if (typeof part !== "object" || part === null) continue;
-        const record = part as {
-          type?: string;
-          id?: string;
-          toolCallId?: string;
-          name?: string;
-          toolName?: string;
-          arguments?: unknown;
-          input?: unknown;
-          args?: unknown;
-          thinking?: unknown;
-          text?: unknown;
-          content?: unknown;
-        };
-        if (record.type === "thinking") {
-          const content = String(record.thinking ?? record.text ?? "");
-          if (content.trim()) items.push({ id: `${baseId}-thinking-${partIndex}`, kind: "thinking", content, status: "completed" });
-          continue;
-        }
-        if (record.type === "toolCall" || record.type === "tool_use" || record.type === "functionCall") {
-          const toolId = record.id ?? record.toolCallId ?? `${baseId}-tool-${partIndex}`;
-          const toolName = record.name ?? record.toolName ?? "tool";
-          const clipped = clipToolText(stringify(record.arguments ?? record.input ?? record.args ?? {}));
-          items.push({
-            id: toolId,
-            kind: "tool",
-            toolCallId: toolId,
-            toolName,
-            input: clipped.text,
-            status: "completed",
-            ...(clipped.truncated ? { truncated: true } : {}),
-          });
-          const path = filePathFromToolInput(toolName, clipped.text);
-          if (path) toolPaths.set(toolId, path);
-          continue;
-        }
-        const content = record.type === "text" || "text" in record
-          ? String(record.text ?? "")
-          : typeof record.content === "string"
-            ? record.content
-            : "";
-        if (content.trim()) items.push({ id: `${baseId}-text-${partIndex}`, kind: "assistant", content, status: "completed" });
-      }
-      continue;
-    }
-
-    if (role === "toolResult" || role === "tool") {
-      const path = toolPaths.get(message.toolCallId ?? baseId);
-      const details = message.details as { patch?: unknown } | undefined;
-      const change = path && typeof details?.patch === "string"
-        ? createFileChangeSummaryFromPatch(path, details.patch)
-        : undefined;
-      const output = clipToolText(messageText(message) || stringify(message.content));
-      items.push({
-        id: baseId,
-        kind: "tool",
-        toolCallId: message.toolCallId ?? baseId,
-        toolName: message.toolName ?? "tool",
-        input: "",
-        output: output.text,
-        status: message.isError ? "error" : "completed",
-        ...(change ? { change } : {}),
-        ...(output.truncated ? { truncated: true } : {}),
-      });
-      continue;
-    }
-
-    if (role === "bashExecution") {
-      const input = clipToolText(String(message.command ?? ""));
-      const output = clipToolText(String(message.output ?? ""));
-      items.push({
-        id: baseId,
-        kind: "tool",
-        toolCallId: baseId,
-        toolName: "bash",
-        input: input.text,
-        output: output.text,
-        status: message.exitCode && message.exitCode !== 0 ? "error" : "completed",
-        ...(input.truncated || output.truncated ? { truncated: true } : {}),
-      });
-    }
-  }
-
-  return items;
-}
-
-function sessionMessages(session?: PiSessionLike): Array<Record<string, unknown>> {
-  let messages = (session?.messages ?? []) as Array<Record<string, unknown>>;
-  if (messages.length === 0) {
-    const manager = session?.sessionManager as { buildSessionContext?: () => { messages?: unknown[] } } | undefined;
-    messages = (manager?.buildSessionContext?.().messages ?? []) as Array<Record<string, unknown>>;
+    messages = (manager?.buildSessionContext?.().messages ?? []) as RawMessage[];
   }
   return messages;
 }
 
+function baseIdFor(message: RawMessage, index: number): string {
+  return message.id ?? `hist-${index}`;
+}
+
+function isCountableUser(message: RawMessage): boolean {
+  return (message.role ?? "") === "user" && Boolean(messageText(message).trim());
+}
+
+function findTailStartIndex(messages: RawMessage[], tailTurns: number, end = messages.length): number {
+  if (!Number.isFinite(tailTurns)) return 0;
+  if (tailTurns <= 0) return end;
+  let found = 0;
+  for (let i = end - 1; i >= 0; i -= 1) {
+    if (!isCountableUser(messages[i]!)) continue;
+    found += 1;
+    if (found === tailTurns) return i;
+  }
+  return 0;
+}
+
+function hasUserBefore(messages: RawMessage[], start: number): boolean {
+  for (let i = start - 1; i >= 0; i -= 1) {
+    if (isCountableUser(messages[i]!)) return true;
+  }
+  return false;
+}
+
+function messageContainsId(message: RawMessage, index: number, id: string): boolean {
+  const baseId = baseIdFor(message, index);
+  if (baseId === id) return true;
+  if ((message.role ?? "") !== "assistant" || !Array.isArray(message.content)) return false;
+  for (const [partIndex, part] of message.content.entries()) {
+    if (typeof part === "string") {
+      if (`${baseId}-text-${partIndex}` === id) return true;
+      continue;
+    }
+    if (typeof part !== "object" || part === null) continue;
+    const record = part as { type?: string; id?: string; toolCallId?: string };
+    if (record.type === "thinking") {
+      if (`${baseId}-thinking-${partIndex}` === id) return true;
+      continue;
+    }
+    if (record.type === "toolCall" || record.type === "tool_use" || record.type === "functionCall") {
+      const toolId = record.id ?? record.toolCallId ?? `${baseId}-tool-${partIndex}`;
+      if (toolId === id) return true;
+      continue;
+    }
+    if (`${baseId}-text-${partIndex}` === id) return true;
+  }
+  return false;
+}
+
+function clipChange(change: FileChangeSummary | undefined): { change?: FileChangeSummary; truncated: boolean } {
+  if (!change) return { truncated: false };
+  const clipped = clipText(change.diff);
+  return {
+    change: clipped.truncated ? { ...change, diff: clipped.text } : change,
+    truncated: clipped.truncated,
+  };
+}
+
+function clipMessageBody(message: RawMessage): { text: string; truncated: boolean } {
+  if (typeof message.content === "string") return clipText(message.content);
+  if (message.content !== undefined) return clipUnknown(message.content);
+  return clipText(messageText(message));
+}
+
+function appendHydratedMessage(
+  message: RawMessage,
+  index: number,
+  items: TimelineItem[],
+  toolPaths: Map<string, string>,
+): void {
+  const baseId = baseIdFor(message, index);
+  const role = message.role ?? "";
+
+  if (role === "user") {
+    const content = messageText(message);
+    if (content.trim()) items.push({ id: baseId, kind: "user", content, status: "completed" });
+    return;
+  }
+
+  if (role === "assistant") {
+    const parts = Array.isArray(message.content) ? message.content : undefined;
+    if (!parts) {
+      const content = messageText(message);
+      if (content.trim()) items.push({ id: baseId, kind: "assistant", content, status: "completed" });
+      return;
+    }
+    for (const [partIndex, part] of parts.entries()) {
+      if (typeof part === "string") {
+        if (part.trim()) items.push({ id: `${baseId}-text-${partIndex}`, kind: "assistant", content: part, status: "completed" });
+        continue;
+      }
+      if (typeof part !== "object" || part === null) continue;
+      const record = part as {
+        type?: string;
+        id?: string;
+        toolCallId?: string;
+        name?: string;
+        toolName?: string;
+        arguments?: unknown;
+        input?: unknown;
+        args?: unknown;
+        thinking?: unknown;
+        text?: unknown;
+        content?: unknown;
+      };
+      if (record.type === "thinking") {
+        const content = String(record.thinking ?? record.text ?? "");
+        if (content.trim()) items.push({ id: `${baseId}-thinking-${partIndex}`, kind: "thinking", content, status: "completed" });
+        continue;
+      }
+      if (record.type === "toolCall" || record.type === "tool_use" || record.type === "functionCall") {
+        const toolId = record.id ?? record.toolCallId ?? `${baseId}-tool-${partIndex}`;
+        const toolName = record.name ?? record.toolName ?? "tool";
+        const args = record.arguments ?? record.input ?? record.args ?? {};
+        const path = filePathFromToolArgs(toolName, args);
+        const clipped = clipUnknown(args);
+        items.push({
+          id: toolId,
+          kind: "tool",
+          toolCallId: toolId,
+          toolName,
+          input: clipped.text,
+          status: "completed",
+          ...(clipped.truncated ? { truncated: true } : {}),
+        });
+        if (path) toolPaths.set(toolId, path);
+        continue;
+      }
+      const content = record.type === "text" || "text" in record
+        ? String(record.text ?? "")
+        : typeof record.content === "string"
+          ? record.content
+          : "";
+      if (content.trim()) items.push({ id: `${baseId}-text-${partIndex}`, kind: "assistant", content, status: "completed" });
+    }
+    return;
+  }
+
+  if (role === "toolResult" || role === "tool") {
+    const path = toolPaths.get(message.toolCallId ?? baseId);
+    const details = message.details as { patch?: unknown } | undefined;
+    const { change, truncated: changeTruncated } = clipChange(
+      path && typeof details?.patch === "string"
+        ? createFileChangeSummaryFromPatch(path, details.patch)
+        : undefined,
+    );
+    const output = clipMessageBody(message);
+    items.push({
+      id: baseId,
+      kind: "tool",
+      toolCallId: message.toolCallId ?? baseId,
+      toolName: message.toolName ?? "tool",
+      input: "",
+      output: output.text,
+      status: message.isError ? "error" : "completed",
+      ...(change ? { change } : {}),
+      ...(output.truncated || changeTruncated ? { truncated: true } : {}),
+    });
+    return;
+  }
+
+  if (role === "bashExecution") {
+    const input = clipText(String(message.command ?? ""));
+    const output = clipText(String(message.output ?? ""));
+    items.push({
+      id: baseId,
+      kind: "tool",
+      toolCallId: baseId,
+      toolName: "bash",
+      input: input.text,
+      output: output.text,
+      status: message.exitCode && message.exitCode !== 0 ? "error" : "completed",
+      ...(input.truncated || output.truncated ? { truncated: true } : {}),
+    });
+  }
+}
+
+function hydrateRange(messages: RawMessage[], start: number, end: number): TimelineItem[] {
+  const items: TimelineItem[] = [];
+  const toolPaths = new Map<string, string>();
+  for (let index = start; index < end; index += 1) {
+    appendHydratedMessage(messages[index]!, index, items, toolPaths);
+  }
+  return items;
+}
+
+export function hydrateAllTurns(session?: PiSessionLike): TimelineItem[] {
+  const messages = sessionMessages(session);
+  return hydrateRange(messages, 0, messages.length);
+}
+
 export function countUserTurns(session?: PiSessionLike): number {
   let count = 0;
-  for (const raw of sessionMessages(session)) {
-    const role = (raw as { role?: string }).role ?? "";
-    if (role !== "user") continue;
-    if (messageText(raw).trim()) count += 1;
+  for (const message of sessionMessages(session)) {
+    if (isCountableUser(message)) count += 1;
   }
   return count;
 }
@@ -182,13 +249,22 @@ export function hydrateTimeline(
   session?: PiSessionLike,
   opts?: { tailTurns?: number },
 ): TimelineItem[] {
-  return takeTailTurns(hydrateAllTurns(session), opts?.tailTurns ?? DEFAULT_TAIL_TURNS);
+  const messages = sessionMessages(session);
+  const start = findTailStartIndex(messages, opts?.tailTurns ?? DEFAULT_TAIL_TURNS);
+  return hydrateRange(messages, start, messages.length);
 }
 
 export function timelineHasMore(session?: PiSessionLike, opts?: { tailTurns?: number }): boolean {
   const tailTurns = opts?.tailTurns ?? DEFAULT_TAIL_TURNS;
   if (!Number.isFinite(tailTurns)) return false;
-  return countUserTurns(session) > tailTurns;
+  const messages = sessionMessages(session);
+  let found = 0;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (!isCountableUser(messages[i]!)) continue;
+    found += 1;
+    if (found > tailTurns) return true;
+  }
+  return false;
 }
 
 export function loadOlderItems(
@@ -196,13 +272,17 @@ export function loadOlderItems(
   beforeId: string,
   limit = DEFAULT_TAIL_TURNS,
 ): { items: TimelineItem[]; hasMore: boolean } {
-  const all = hydrateAllTurns(session);
-  const beforeIndex = all.findIndex((item) => item.id === beforeId);
+  const messages = sessionMessages(session);
+  let beforeIndex = -1;
+  for (let i = 0; i < messages.length; i += 1) {
+    if (messageContainsId(messages[i]!, i, beforeId)) {
+      beforeIndex = i;
+      break;
+    }
+  }
   if (beforeIndex <= 0) return { items: [], hasMore: false };
-  const prior = all.slice(0, beforeIndex);
-  const userIndexes = prior.flatMap((item, index) => item.kind === "user" ? [index] : []);
-  const cut = userIndexes.length > limit ? userIndexes[userIndexes.length - limit]! : 0;
-  return { items: prior.slice(cut), hasMore: cut > 0 };
+  const start = findTailStartIndex(messages, limit, beforeIndex);
+  return { items: hydrateRange(messages, start, beforeIndex), hasMore: hasUserBefore(messages, start) };
 }
 
 export function hydrateToolCallsFromItems(items: TimelineItem[]): Record<string, ToolCallState> {

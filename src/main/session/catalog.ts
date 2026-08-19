@@ -1,7 +1,8 @@
 import { unlink } from "node:fs/promises";
 import { readFileSync } from "node:fs";
-import { SessionManager, type SessionInfo } from "@earendil-works/pi-coding-agent";
+import type { SessionInfo } from "@earendil-works/pi-coding-agent";
 import type { SessionSummary } from "../../shared/protocol.js";
+import { listSessionsFromCwd } from "./sessionFile.js";
 
 export function sortSessionInfos<T extends Pick<SessionInfo, "modified">>(infos: T[]): T[] {
   return [...infos].sort((left, right) => right.modified.getTime() - left.modified.getTime());
@@ -35,8 +36,7 @@ export function toSessionSummary(info: SessionInfo): SessionSummary {
 }
 
 export async function listSessions(cwd: string): Promise<SessionSummary[]> {
-  const infos = await SessionManager.list(cwd);
-  return sortSessionInfos(infos).map(toSessionSummary);
+  return listSessionsFromCwd(cwd);
 }
 
 export async function deleteSessionFile(sessionPath: string): Promise<void> {

@@ -118,6 +118,10 @@ export function App() {
   const stickToBottomRef = useRef(true);
   const [scrolledFromBottom, setScrolledFromBottom] = useState(false);
   const requestNewSessionRef = useRef<() => void>(() => undefined);
+  useEffect(() => {
+    setScrolledFromBottom(false);
+    stickToBottomRef.current = true;
+  }, [activeTabId]);
 
   const openChanges = useCallback((path?: string) => {
     const selected = path && sessionChanges.some((change) => change.path === path)
@@ -270,9 +274,7 @@ export function App() {
 
   const jumpToLatest = useCallback(() => {
     const wrap = timelineWrapRef.current;
-    // Do not force stickToBottom here: the streamed rAF re-stick would cut the
-    // smooth animation short. Let the scroll settle at the bottom; the scroll
-    // event handler then sees atBottom and re-engages stick-to-bottom.
+    stickToBottomRef.current = true;
     setScrolledFromBottom(false);
     if (wrap) wrap.scrollTo({ top: wrap.scrollHeight, behavior: "smooth" });
   }, []);
@@ -653,7 +655,11 @@ export function App() {
     if (!key || !view?.hasMore || !view.oldestId || view.loadingOlder) return;
     useAppStore.getState().putView({ ...view, loadingOlder: true });
     try {
-      const page = await api?.loadOlder?.({ sessionKey: key, beforeId: view.oldestId });
+      const page = await api?.loadOlder?.({
+        sessionKey: key,
+        beforeId: view.oldestId,
+        sessionPath: view.session.sessionFile,
+      });
       const latest = useAppStore.getState().getView(key);
       if (!latest || !page) return;
       const hasMore = page.items.length > 0 && page.hasMore;
@@ -820,43 +826,45 @@ export function App() {
           hideShortcuts={activeMode === "plan" && rightPane === "plan"}
         />
 
-        <div
-          ref={timelineWrapRef}
-          className={`timeline-wrap ${state.timeline.length === 0 ? "is-empty" : ""}`}
-          onScroll={() => {
-            const wrap = timelineWrapRef.current;
-            if (!wrap) return;
-            const atBottom = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 80;
-            stickToBottomRef.current = atBottom;
-            setScrolledFromBottom(!atBottom);
-            if (wrap.scrollTop >= 80) loadOlderArmedRef.current = true;
-            if (wrap.scrollTop < 80 && activeView?.hasMore && loadOlderArmedRef.current) {
-              loadOlderArmedRef.current = false;
-              void loadOlderForActive();
-            }
-          }}
-        >
-          <div className="chat-column">
-            {state.timeline.length > 0 ? (
-              planConversation
-            ) : activeView?.hydrate === "loading" ? (
-              <div className="session-loading" role="status">
-                <span className="session-loading-dot" aria-hidden />
-                Loading session…
-              </div>
-            ) : activeView?.hydrate === "error" ? (
-              <div className="session-loading" role="alert">
-                <p>{activeView.errorMessage ?? "Failed to open session"}</p>
-                <button type="button" onClick={() => activeTabId && void activateTab(activeTabId)}>Retry</button>
-              </div>
-            ) : (
-              <WelcomeBlock
-                projectName={projectName}
-                hasSession={Boolean(state.session.sessionId)}
-                onOpenProject={() => void openProject()}
-                onNewTask={requestNewSession}
-              />
-            )}
+        <div className="timeline-stage">
+          <div
+            ref={timelineWrapRef}
+            className={`timeline-wrap ${state.timeline.length === 0 ? "is-empty" : ""}`}
+            onScroll={() => {
+              const wrap = timelineWrapRef.current;
+              if (!wrap) return;
+              const atBottom = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 80;
+              stickToBottomRef.current = atBottom;
+              setScrolledFromBottom(!atBottom);
+              if (wrap.scrollTop >= 80) loadOlderArmedRef.current = true;
+              if (wrap.scrollTop < 80 && activeView?.hasMore && loadOlderArmedRef.current) {
+                loadOlderArmedRef.current = false;
+                void loadOlderForActive();
+              }
+            }}
+          >
+            <div className="chat-column">
+              {state.timeline.length > 0 ? (
+                planConversation
+              ) : activeView?.hydrate === "loading" ? (
+                <div className="session-loading" role="status">
+                  <span className="session-loading-dot" aria-hidden />
+                  Loading session…
+                </div>
+              ) : activeView?.hydrate === "error" ? (
+                <div className="session-loading" role="alert">
+                  <p>{activeView.errorMessage ?? "Failed to open session"}</p>
+                  <button type="button" onClick={() => activeTabId && void activateTab(activeTabId)}>Retry</button>
+                </div>
+              ) : (
+                <WelcomeBlock
+                  projectName={projectName}
+                  hasSession={Boolean(state.session.sessionId)}
+                  onOpenProject={() => void openProject()}
+                  onNewTask={requestNewSession}
+                />
+              )}
+            </div>
           </div>
           {scrolledFromBottom && state.timeline.length > 0 && (
             <button
@@ -867,7 +875,7 @@ export function App() {
               onClick={jumpToLatest}
             >
               <AppIcon name="chevronDown" size="sm" />
-              New messages
+              Latest
             </button>
           )}
         </div>

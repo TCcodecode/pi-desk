@@ -46,12 +46,39 @@ function makeFakeApi() {
           sessionId: "s1",
           cwd: options.cwd,
           name: "Test session",
+          sessionFile: options.sessionPath,
         },
         projects: [{ id: options.cwd, name: options.cwd.split("/").pop() ?? "project", path: options.cwd, updatedAt: new Date().toISOString() }],
         activeProjectId: options.cwd,
         sessions: [],
       };
     }),
+    previewSession: vi.fn(async (options: { cwd: string; sessionPath: string }) => ({
+      ...useAppStore.getState(),
+      session: {
+        ...useAppStore.getState().session,
+        sessionId: options.sessionPath.includes("history")
+          ? "s-history"
+          : options.sessionPath.includes("b.jsonl")
+            ? "s-b"
+            : options.sessionPath.includes("a.jsonl")
+              ? "s-a"
+              : "s1",
+        cwd: options.cwd,
+        name: options.sessionPath.includes("history")
+          ? "Historical task"
+          : options.sessionPath.includes("b.jsonl")
+            ? "Second task"
+            : options.sessionPath.includes("a.jsonl")
+              ? "First task"
+              : "Test session",
+        sessionFile: options.sessionPath,
+      },
+      projects: [{ id: options.cwd, name: options.cwd.split("/").pop() ?? "project", path: options.cwd, updatedAt: new Date().toISOString() }],
+      activeProjectId: options.cwd,
+      sessions: [],
+      preview: true,
+    })),
     focusSession: vi.fn(async () => useAppStore.getState()),
     disposeSession: vi.fn(async () => undefined),
     loadOlder: vi.fn(async () => ({ items: [], hasMore: false })),
@@ -338,17 +365,18 @@ describe("Pi Desktop end-to-end send flow", () => {
     const historicalTimeline = [
       { id: "old-user", kind: "user" as const, content: "old prompt", status: "completed" as const },
     ];
-    vi.mocked(api.startSession).mockImplementation(async ({ cwd, sessionPath }) => ({
+    vi.mocked(api.previewSession).mockImplementation(async ({ cwd, sessionPath }) => ({
       ...useAppStore.getState(),
       session: {
         ...useAppStore.getState().session,
-        sessionId: sessionPath ? "s-history" : "s-new",
+        sessionId: "s-history",
         sessionFile: sessionPath,
         cwd,
-        name: sessionPath ? "Historical task" : "New task",
+        name: "Historical task",
         status: "idle",
       },
-      timeline: sessionPath ? historicalTimeline : [],
+      timeline: historicalTimeline,
+      preview: true,
       projects: [project],
       activeProjectId: project.id,
       sessions: [],
@@ -389,10 +417,9 @@ describe("Pi Desktop end-to-end send flow", () => {
 
     render(<App />);
     await waitFor(() =>
-      expect(api.startSession).toHaveBeenCalledWith({
+      expect(api.previewSession).toHaveBeenCalledWith({
         cwd: project.path,
         sessionPath: "/tmp/history.jsonl",
-        sessionKey: "tab-history",
       }),
     );
     await waitFor(() => {
@@ -459,10 +486,9 @@ describe("Pi Desktop end-to-end send flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close First task" }));
 
     await waitFor(() =>
-      expect(api.startSession).toHaveBeenCalledWith({
+      expect(api.previewSession).toHaveBeenCalledWith({
         cwd: "/tmp/project",
         sessionPath: "/tmp/b.jsonl",
-        sessionKey: "tab-b",
       }),
     );
     await waitFor(() => expect(screen.getByText("Second task")).toBeInTheDocument());
@@ -488,14 +514,14 @@ describe("Pi Desktop end-to-end send flow", () => {
     });
     let resolveSecond: ((snapshot: PiSnapshot) => void) | undefined;
     let resolveThird: ((snapshot: PiSnapshot) => void) | undefined;
-    vi.mocked(api.startSession).mockImplementation(({ sessionPath }) => {
+    vi.mocked(api.previewSession).mockImplementation(({ sessionPath }) => {
       if (sessionPath === "/tmp/b.jsonl") {
         return new Promise<PiSnapshot>((resolve) => { resolveSecond = resolve; });
       }
       if (sessionPath === "/tmp/c.jsonl") {
         return new Promise<PiSnapshot>((resolve) => { resolveThird = resolve; });
       }
-      return Promise.resolve(snapshotFor("s-a", "/tmp/a.jsonl", "First task"));
+      return Promise.resolve({ ...snapshotFor("s-a", "/tmp/a.jsonl", "First task"), preview: true });
     });
     (window as unknown as { pi: PiApi }).pi = api;
     localStorage.setItem(
@@ -697,9 +723,11 @@ describe("Timeline jump-to-latest pill", () => {
 
     expect(screen.queryByRole("button", { name: /jump to latest/i })).not.toBeInTheDocument();
     fireEvent.scroll(wrap);
-    expect(screen.getByRole("button", { name: /jump to latest/i })).toBeInTheDocument();
+    const jump = screen.getByRole("button", { name: /jump to latest/i });
+    expect(jump).toBeInTheDocument();
+    expect(wrap.contains(jump)).toBe(false);
 
-    fireEvent.click(screen.getByRole("button", { name: /jump to latest/i }));
+    fireEvent.click(jump);
     expect(wrap.scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: "smooth" }));
     expect(screen.queryByRole("button", { name: /jump to latest/i })).not.toBeInTheDocument();
 

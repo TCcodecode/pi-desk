@@ -57,10 +57,15 @@ export function createFileChangeSummary(
 export function createFileChangeSummaryFromPatch(path: string, patch: string): FileChangeSummary | undefined {
   let additions = 0;
   let deletions = 0;
-  for (const line of patch.split("\n")) {
-    if (line.startsWith("+++") || line.startsWith("---")) continue;
-    if (line.startsWith("+")) additions++;
-    if (line.startsWith("-")) deletions++;
+  let index = 0;
+  while (index < patch.length) {
+    const next = patch.indexOf("\n", index);
+    const end = next === -1 ? patch.length : next;
+    if (!patch.startsWith("+++", index) && !patch.startsWith("---", index)) {
+      if (patch.startsWith("+", index)) additions += 1;
+      else if (patch.startsWith("-", index)) deletions += 1;
+    }
+    index = end + 1;
   }
   return additions === 0 && deletions === 0 ? undefined : { path, additions, deletions, diff: patch };
 }

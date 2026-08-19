@@ -22,6 +22,8 @@ export interface SessionView {
   oldestId?: string;
   loadingOlder?: boolean;
   errorMessage?: string;
+  /** File-tail view; host has no live slot until the user sends. */
+  cold?: boolean;
 }
 
 export function createView(
@@ -62,6 +64,7 @@ export function applySnapshotToView(view: SessionView, snap: PiSnapshot): Sessio
     hasMore: snap.timelineHasMore === true,
     oldestId: oldestIdFrom(snap.timeline ?? []),
     errorMessage: undefined,
+    cold: snap.preview === true,
   };
 }
 

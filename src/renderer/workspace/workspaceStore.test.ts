@@ -163,6 +163,9 @@ describe("activateTab stale generation", () => {
       startSession: vi.fn(async ({ sessionKey }: { sessionKey?: string }) =>
         focusSession(sessionKey ?? "unknown"),
       ),
+      previewSession: vi.fn(async ({ sessionPath }: { sessionPath: string }) =>
+        focusSession(sessionPath.includes("/a.") ? "a" : "b"),
+      ),
       listSessions: vi.fn(async () => []),
       listLiveSessions: vi.fn(async () => []),
     } as never;
@@ -226,7 +229,7 @@ describe("activateTab stale generation", () => {
       },
     });
 
-    const startSession = vi.fn(async () => ({
+    const snap = {
       ...useAppStore.getState(),
       activeProjectId: "/work/pi-workspace",
       session: {
@@ -236,9 +239,13 @@ describe("activateTab stale generation", () => {
         cwd: "/work/pi-workspace",
         name: "1",
       },
-    }));
+      preview: true,
+    };
+    const startSession = vi.fn(async () => snap);
+    const previewSession = vi.fn(async () => snap);
     window.pi = {
       startSession,
+      previewSession,
       listSessions: vi.fn(async () => []),
       listLiveSessions: vi.fn(async () => []),
     } as never;
@@ -249,10 +256,10 @@ describe("activateTab stale generation", () => {
     expect(workspace.tabs.map((item) => item.id)).toEqual(["1", "2", "3"]);
     expect(workspace.tabs.every((item) => item.pinned)).toBe(true);
     expect(workspace.activeTabId).toBe("1");
-    expect(startSession).toHaveBeenCalledWith({
+    expect(startSession).not.toHaveBeenCalled();
+    expect(previewSession).toHaveBeenCalledWith({
       cwd: "/work/pi-workspace",
       sessionPath: "/sessions/pi-1.jsonl",
-      sessionKey: "1",
     });
   });
 });
@@ -368,11 +375,12 @@ describe("startNewSession and openWorkspaceSession", () => {
     const { useAppStore } = await import("../session/store");
 
     let resolveStart!: (snap: unknown) => void;
-    const startSession = vi.fn(
+    const previewSession = vi.fn(
       () => new Promise((resolve) => { resolveStart = resolve; }),
     );
     window.pi = {
-      startSession,
+      startSession: vi.fn(),
+      previewSession,
       listLiveSessions: vi.fn(async () => []),
     } as never;
 

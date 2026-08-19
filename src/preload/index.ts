@@ -9,6 +9,7 @@ const api: PiApi = {
   persistImageAttachment: (input) => ipcRenderer.invoke("pi:persistImageAttachment", input),
   loadImagePreview: (path) => ipcRenderer.invoke("pi:loadImagePreview", path),
   startSession: (options) => ipcRenderer.invoke("pi:startSession", options),
+  previewSession: (options) => ipcRenderer.invoke("pi:previewSession", options),
   focusSession: (sessionKey, opts) => ipcRenderer.invoke("pi:focusSession", sessionKey, opts),
   disposeSession: (sessionKey) => ipcRenderer.invoke("pi:disposeSession", sessionKey),
   loadOlder: (options) => ipcRenderer.invoke("pi:loadOlder", options),

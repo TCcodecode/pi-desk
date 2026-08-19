@@ -106,6 +106,8 @@ export interface PiSnapshot {
   lastError?: string;
   /** True when hydrateTimeline dropped earlier turns. Absent/false = full history. */
   timelineHasMore?: boolean;
+  /** True when this snapshot came from a file tail and has no live runtime. */
+  preview?: boolean;
 }
 
 export interface PiApi {
@@ -122,15 +124,22 @@ export interface PiApi {
     /** When set, open/reuse a live slot without disposing other sessions. */
     sessionKey?: SessionKey;
   }): Promise<PiSnapshot>;
+  /** File-tail snapshot. Does not start a Pi runtime. */
+  previewSession(options: {
+    cwd: string;
+    sessionPath: string;
+    tailTurns?: number;
+  }): Promise<PiSnapshot>;
   /** Focus an existing live session without aborting others. */
   focusSession(sessionKey: SessionKey, opts?: { includeTimeline?: boolean }): Promise<PiSnapshot>;
   /** Explicitly release a runtime (delete file / shutdown). Not used on tab close. */
   disposeSession(sessionKey: SessionKey): Promise<void>;
-  /** Earlier turns before `beforeId` for a live session. */
+  /** Earlier turns before `beforeId`. Uses the live slot or the session file. */
   loadOlder(options: {
     sessionKey: SessionKey;
     beforeId: string;
     limit?: number;
+    sessionPath?: string;
   }): Promise<{ items: TimelineItem[]; hasMore: boolean }>;
   /** All live agent slots (including those without a working-set tab). */
   listLiveSessions(): Promise<LiveSessionSummary[]>;

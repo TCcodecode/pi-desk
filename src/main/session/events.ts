@@ -3,7 +3,7 @@ import { relative, resolve } from "node:path";
 import { isTodoToolName } from "@pi-desk/session-todo";
 import type { FileChangeSummary, PiEvent, SessionKey, ThinkingLevel } from "../../shared/protocol.js";
 import { createFileChangeSummary, filePathFromToolArgs } from "./fileChanges.js";
-import { messageText, resolveDisplayName, stringify } from "./display.js";
+import { clipText, clipUnknown, messageText, resolveDisplayName } from "./display.js";
 import type { RuntimeSlot } from "./types.js";
 
 export interface SessionEventBridge {
@@ -66,6 +66,8 @@ export function finishFileMutation(
       before: previous?.before ?? mutation.before,
       after,
     });
+    const clipped = clipText(change.diff);
+    return clipped.truncated ? { ...change, diff: clipped.text } : change;
   }
   return change;
 }
@@ -154,9 +156,9 @@ export function handleSessionEvent(slot: RuntimeSlot, raw: unknown, host: Sessio
         {
           toolCallId: event.toolCallId ?? host.nextId("tool"),
           toolName: event.toolName ?? "tool",
-          input: stringify(event.args),
+          input: clipUnknown(event.args).text,
         },
-        raw,
+        undefined,
         key,
       );
       break;
@@ -164,8 +166,8 @@ export function handleSessionEvent(slot: RuntimeSlot, raw: unknown, host: Sessio
       if (event.toolCallId) {
         host.emit(
           "tool_call_delta",
-          { toolCallId: event.toolCallId, delta: stringify(event.partialResult) },
-          raw,
+          { toolCallId: event.toolCallId, delta: clipUnknown(event.partialResult).text },
+          undefined,
           key,
         );
       }
@@ -177,11 +179,11 @@ export function handleSessionEvent(slot: RuntimeSlot, raw: unknown, host: Sessio
           "tool_call_completed",
           {
             toolCallId: event.toolCallId,
-            result: stringify(event.result),
+            result: clipUnknown(event.result).text,
             isError: Boolean(event.isError),
             ...(change ? { change } : {}),
           },
-          raw,
+          undefined,
           key,
         );
       }

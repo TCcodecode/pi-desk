@@ -69,6 +69,7 @@ function clearForegroundSession(): void {
 }
 
 function findLiveSessionForTab(tab: SessionTab) {
+  if (useAppStore.getState().getView(tab.id)?.cold) return undefined;
   const hit = useWorkspaceStore.getState().findLiveForTab(tab);
   if (hit) return hit;
   const current = useAppStore.getState().session;
@@ -127,6 +128,9 @@ async function loadSnapshotForTab(tab: SessionTab): Promise<PiSnapshot | undefin
     (sessionPath ? findLiveSessionForTab({ ...tab, sessionFile: sessionPath }) : undefined);
   if (liveHit && api?.focusSession) {
     return api.focusSession(liveHit.sessionKey) as Promise<PiSnapshot | undefined>;
+  }
+  if (sessionPath && api?.previewSession) {
+    return api.previewSession({ cwd, sessionPath });
   }
   if (sessionPath) {
     return api?.startSession({ cwd, sessionPath, sessionKey: tab.id });
@@ -333,6 +337,7 @@ export function toggleWorkspacePin(tabId: string): void {
 }
 
 export async function ensureActiveTabRuntime(): Promise<string | undefined> {
+  const api = getPiApi();
   const tabId = useWorkspaceStore.getState().activeTabId;
   if (!tabId) return undefined;
   const tab = useWorkspaceStore.getState().tabs.find((item) => item.id === tabId);
@@ -344,6 +349,28 @@ export async function ensureActiveTabRuntime(): Promise<string | undefined> {
     return tabId;
   }
   if (view?.hydrate === "ready" && findLiveSessionForTab(tab)) return tabId;
+  if (view?.cold && tab.sessionFile) {
+    const project = useAppStore.getState().projects?.find((item) => item.id === tab.projectId);
+    const cwd = project?.path ?? tab.projectId;
+    const started = await trackStart(
+      tabId,
+      api?.startSession({ cwd, sessionPath: tab.sessionFile, sessionKey: tabId }) ?? Promise.resolve(undefined),
+    );
+    if (started) {
+      const current = useAppStore.getState().getView(tabId);
+      if (current) {
+        useAppStore.getState().putView({
+          ...current,
+          cold: false,
+          session: { ...current.session, ...started.session },
+        });
+      }
+    }
+    if (findLiveSessionForTab(useWorkspaceStore.getState().tabs.find((item) => item.id === tabId) ?? tab)
+      || useAppStore.getState().getView(tabId)?.session.sessionId) {
+      return tabId;
+    }
+  }
   if (view?.hydrate === "loading" || (view?.hydrate === "ready" && !findLiveSessionForTab(tab))) {
     await activateTab(tabId);
     if (findLiveSessionForTab(useWorkspaceStore.getState().tabs.find((item) => item.id === tabId) ?? tab)) {
@@ -499,7 +526,9 @@ export async function openWorkspaceSession(
   try {
     snap = await trackStart(
       sessionKey,
-      api?.startSession({ cwd, sessionPath, sessionKey }) ?? Promise.resolve(undefined),
+      api?.previewSession
+        ? api.previewSession({ cwd, sessionPath })
+        : api?.startSession({ cwd, sessionPath, sessionKey }) ?? Promise.resolve(undefined),
     );
   } catch (error) {
     const current = useAppStore.getState().getView(sessionKey);

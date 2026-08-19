@@ -74,6 +74,7 @@ import { normalizeAuthEvent, normalizeAuthSource } from "./auth.js";
 import { messageText as formatMessageText, modelName as formatModelName, resolveDisplayName as formatSessionName, resolvePathsEqual, stringify as formatUnknown } from "./display.js";
 import { handleSessionEvent } from "./events.js";
 import { createSdkRuntime as createSdkRuntimeSession } from "./runtime.js";
+import { loadOlderFromFile, readSessionTail } from "./sessionFile.js";
 import { buildSnapshot, loadOlderItems } from "./snapshot.js";
 import type {
   AuthModelRuntimeFactory,
@@ -277,14 +278,69 @@ export class PiHost {
     return this.snapshot({ includeTimeline: opts?.includeTimeline });
   }
 
+  previewSession(options: { cwd: string; sessionPath: string; tailTurns?: number }): PiSnapshot {
+    this.workspaceCwd = options.cwd;
+    addProject(options.cwd);
+    setActiveProject(options.cwd);
+    const tail = readSessionTail(options.sessionPath, options.tailTurns);
+    const modelKey = tail.model?.provider && tail.model.id
+      ? `${tail.model.provider}/${tail.model.id}`
+      : "";
+    const snap = buildSnapshot({
+      workspaceId: this.workspaceId,
+      workspaceCwd: options.cwd,
+      sequence: this.sequence,
+      sessionTodos: [],
+      resources: this.getResources(),
+      models: this.getModels(),
+      tools: this.getTools(),
+      runtime: {
+        cwd: options.cwd,
+        session: {
+          sessionId: tail.sessionId,
+          sessionFile: options.sessionPath,
+          sessionName: tail.name,
+          cwd: options.cwd,
+          model: tail.model,
+          thinkingLevel: tail.thinkingLevel ?? "medium",
+          isStreaming: false,
+          messages: tail.messages,
+          getActiveToolNames: () => [],
+          getAllTools: () => [],
+          getSessionStats: () => undefined,
+          subscribe: () => () => undefined,
+          prompt: async () => undefined,
+          steer: async () => undefined,
+          followUp: async () => undefined,
+          abort: async () => undefined,
+          setThinkingLevel: () => undefined,
+        },
+      } as never,
+      tailTurns: options.tailTurns,
+    });
+    return {
+      ...snap,
+      session: {
+        ...snap.session,
+        name: tail.name,
+        model: modelKey || snap.session.model,
+        thinkingLevel: (tail.thinkingLevel ?? snap.session.thinkingLevel) as typeof snap.session.thinkingLevel,
+      },
+      timelineHasMore: tail.hasMore || snap.timelineHasMore === true,
+      preview: true,
+    };
+  }
+
   async loadOlder(options: {
     sessionKey: SessionKey;
     beforeId: string;
     limit?: number;
+    sessionPath?: string;
   }): Promise<{ items: TimelineItem[]; hasMore: boolean }> {
     const slot = this.slots.get(options.sessionKey);
-    if (!slot) throw new Error(`Unknown sessionKey: ${options.sessionKey}`);
-    return loadOlderItems(slot.runtime.session, options.beforeId, options.limit);
+    if (slot) return loadOlderItems(slot.runtime.session, options.beforeId, options.limit);
+    if (options.sessionPath) return loadOlderFromFile(options.sessionPath, options.beforeId, options.limit);
+    throw new Error(`Unknown sessionKey: ${options.sessionKey}`);
   }
 
   isForegroundSession(sessionKey?: SessionKey): boolean {
@@ -2079,7 +2135,7 @@ export class PiHost {
   private emit<T extends PiEvent["type"]>(
     type: T,
     payload: Extract<PiEvent, { type: T }>["payload"],
-    raw?: unknown,
+    _raw?: unknown,
     sessionKey?: SessionKey,
   ): void {
     const key = sessionKey ?? this.foregroundKey;
@@ -2093,7 +2149,6 @@ export class PiHost {
       sequence: this.sequence,
       type,
       payload,
-      raw,
     } as PiEvent;
     this.listeners.forEach((listener) => listener(event));
   }
