@@ -762,6 +762,43 @@ describe("PiHost", () => {
     expect(models.some((model) => model.provider === "google")).toBe(false);
   });
 
+  test("refreshAvailableModels recovers when the live runtime reports stale empty availability", async () => {
+    const fake = createFakeRuntime();
+    let liveConfigured = false;
+    const models = [
+      { provider: "deepseek", id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" },
+      { provider: "deepseek", id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
+    ];
+    let refreshed = false;
+    fake.session.model = { provider: "deepseek", id: "deepseek-v4-flash" };
+    fake.session.settingsManager = {
+      getPackages: () => [],
+      getDefaultProvider: () => "deepseek",
+      getDefaultModel: () => "deepseek-v4-flash",
+    };
+    fake.session.modelRuntime = {
+      getModels: () => models,
+      getModel: (provider: string, id: string) => models.find((m) => m.provider === provider && m.id === id),
+      // Simulates a stale snapshot that predates env-based configuration.
+      getAvailable: async () => (refreshed ? models : []),
+      getAvailableSnapshot: () => [],
+      hasConfiguredAuth: (provider: string) => provider === "deepseek" && liveConfigured,
+      refresh: async () => {
+        refreshed = true;
+        liveConfigured = true;
+      },
+    };
+    const host = new PiHost({ workspaceId: "workspace-1", runtime: fake.runtime });
+
+    const modelsList = await host.refreshAvailableModels();
+    expect(refreshed).toBe(true);
+    expect(modelsList.map((m) => m.id).sort()).toEqual([
+      "deepseek/deepseek-v4-flash",
+      "deepseek/deepseek-v4-pro",
+    ].sort());
+    expect(modelsList.every((m) => m.available)).toBe(true);
+  });
+
   test("refreshAvailableModels ignores ambient env providers (e.g. Anthropic) when default is deepseek", async () => {
     const agentDir = mkdtempSync(join(tmpdir(), "pi-models-"));
     try {

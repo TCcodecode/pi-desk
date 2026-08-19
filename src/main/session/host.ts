@@ -946,6 +946,21 @@ export class PiHost {
       });
     }
 
+    // The live session runtime can serve a stale/empty availability snapshot (e.g. it was
+    // resumed without re-running availability, or the system env changed since it started).
+    // Refresh the live runtime's availability before giving up so the model list matches
+    // configured providers (auth.json / env) without creating a dedicated auth runtime.
+    if (raw.length === 0 && modelRuntime.refresh && this.runtime?.session) {
+      try {
+        await modelRuntime.refresh({ allowNetwork: false });
+        if (modelRuntime.getAvailable) {
+          raw = [...(await modelRuntime.getAvailable())];
+        }
+      } catch {
+        // Availability refresh is best-effort; keep the empty list rather than fail.
+      }
+    }
+
     // Restrict to intentional Pi providers only (settings + auth.json). Never expand
     // just because the current session model happens to be from another provider.
     const intentional = this.intentionalProviders(session);
