@@ -20,7 +20,9 @@ type SessionManagerCtor = new (
 
 /** Read a session JSONL in slices so the Electron main thread can keep painting. */
 export async function loadEntriesFromFileAsync(filePath: string): Promise<FileEntry[]> {
-  if (!existsSync(filePath)) return [];
+  if (!existsSync(filePath)) {
+    throw new Error(`Session file no longer exists: ${filePath}`);
+  }
   const entries: FileEntry[] = [];
   const rl = createInterface({
     input: createReadStream(filePath, { encoding: "utf8" }),

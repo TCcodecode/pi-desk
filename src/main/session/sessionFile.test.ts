@@ -130,6 +130,10 @@ describe("session file tail", () => {
     expect(listSessionFiles(dir)[0]?.thinkingLevel).toBe("low");
   });
 
+  test("readSessionTail throws a clear error when the file is gone", () => {
+    expect(() => readSessionTail("/tmp/pi-missing-session.jsonl")).toThrow(/no longer exists/);
+  });
+
   test("listing and tail preview never JSON.parse oversized tool lines", () => {
     const dir = mkdtempSync(join(tmpdir(), "pi-session-skip-"));
     const path = join(dir, "skip.jsonl");

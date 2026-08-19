@@ -7,6 +7,7 @@ import {
   ensureInWorkingSet,
   findRestorableTab,
   loadOpenTabs,
+  retainExistingSessionTabs,
 } from "../workspace/sessionTabs";
 import { useAppStore } from "./store";
 
@@ -99,8 +100,15 @@ export function subscribeHostEvents(
         if (!active) return;
         useAppStore.setState({ sessions: list });
         const saved = loadOpenTabs();
+        const catalogFiles = list.map((item) => item.sessionFile).filter((item): item is string => Boolean(item));
+        const existing = catalogFiles.length > 0
+          ? retainExistingSessionTabs(saved.tabs, catalogFiles)
+          : saved.tabs;
+        if (existing.length !== saved.tabs.length) {
+          useWorkspaceStore.getState().replaceWorkingSet(existing, saved.activeTabId);
+        }
         const preferred =
-          findRestorableTab(saved.tabs, saved.activeTabId, project.id, project.path) ??
+          findRestorableTab(existing, saved.activeTabId, project.id, project.path) ??
           (list[0]?.sessionFile
             ? {
                 id: `file:${list[0].sessionFile}`,

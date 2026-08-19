@@ -5,6 +5,7 @@ import {
   displayTabTitle,
   ensureInWorkingSet,
   findRestorableTab,
+  retainExistingSessionTabs,
   loadOpenTabs,
   promotePreviewTab,
   sortTabsPinnedFirst,
@@ -315,6 +316,16 @@ describe("working set limit", () => {
     expect(r.tabs.map((item) => item.id)).not.toContain(preview.id);
     expect(r.tabs.map((item) => item.title)).toContain("T3");
     expect(r.activeTabId).not.toBe(preview.id);
+  });
+
+  test("retainExistingSessionTabs drops tabs whose files are gone", () => {
+    const kept = { ...tab(1), id: "kept" };
+    const gone = { ...tab(2), id: "gone", sessionFile: "/tmp/missing.jsonl" };
+    const empty = { ...tab(3), id: "empty", sessionFile: undefined, sessionId: "" };
+    expect(retainExistingSessionTabs([kept, gone, empty], [kept.sessionFile]).map((item) => item.id)).toEqual([
+      "kept",
+      "empty",
+    ]);
   });
 
   test("loadOpenTabs forces sessionFile tabs out of preview", () => {

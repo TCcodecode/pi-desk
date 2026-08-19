@@ -178,7 +178,14 @@ function countUsers(messages: Array<Record<string, unknown>>): number {
   return count;
 }
 
+function assertSessionFile(sessionPath: string): void {
+  if (!existsSync(sessionPath)) {
+    throw new Error(`Session file no longer exists: ${sessionPath}`);
+  }
+}
+
 function readHeader(sessionPath: string): { id: string; cwd: string; timestamp?: string } {
+  assertSessionFile(sessionPath);
   const head = readSlice(sessionPath, 0, SESSION_LIST_HEAD_BYTES);
   for (const entry of parseEntries(head, false)) {
     if (entry.type === "session" && typeof (entry as { id?: string }).id === "string") {

@@ -75,6 +75,15 @@ export function saveOpenTabs(tabs: SessionTab[], activeTabId?: string): void {
   );
 }
 
+/** Drop working-set tabs whose session files are no longer on disk. */
+export function retainExistingSessionTabs(
+  tabs: SessionTab[],
+  existingFiles: Iterable<string | undefined>,
+): SessionTab[] {
+  const files = new Set(Array.from(existingFiles).filter((item): item is string => Boolean(item)));
+  return tabs.filter((tab) => !tab.sessionFile || files.has(tab.sessionFile));
+}
+
 /** Pick a persisted tab belonging to the project being restored. */
 export function findRestorableTab(
   tabs: SessionTab[],

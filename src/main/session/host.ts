@@ -669,7 +669,10 @@ export class PiHost {
   }
 
   async setModeProfile(mode: AgentMode, profile: AgentProfile, opts?: SessionCommandOptions): Promise<SessionModeState> {
-    const slot = this.requireSlot(opts?.sessionKey);
+    const slot = this.getSlot(opts?.sessionKey);
+    if (!slot) {
+      return defaultModeState(profile.modelKey, profile.thinkingLevel);
+    }
     if (slot.runtime.session.isStreaming) throw new Error("Stop the current turn before changing the model profile");
     const model = profile.modelKey
       ? this.resolveModel(slot.runtime.session, profile.modelKey)

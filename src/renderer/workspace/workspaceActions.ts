@@ -235,13 +235,21 @@ export async function activateTab(tabId: string): Promise<void> {
         useAppStore.getState().bindForeground(tabId);
       }
     }
-    if (isCurrentActivation(activation) && useWorkspaceStore.getState().activeTabId === tabId) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/no longer exists|ENOENT/.test(message)) {
+      dropViewAndMaybeDispose(tabId);
+      const remaining = useWorkspaceStore.getState().tabs.filter((item) => item.id !== tabId);
+      const fallbackTabId = remaining.some((item) => item.id === previousActiveTabId)
+        ? previousActiveTabId
+        : remaining[0]?.id;
+      useWorkspaceStore.getState().replaceWorkingSet(remaining, fallbackTabId);
+    } else if (isCurrentActivation(activation) && useWorkspaceStore.getState().activeTabId === tabId) {
       const fallbackTabId = tabsAfterCommit.some((item) => item.id === previousActiveTabId)
         ? previousActiveTabId
         : undefined;
       useWorkspaceStore.getState().setActiveTabId(fallbackTabId);
     }
-    pushError(error instanceof Error ? error.message : String(error));
+    pushError(message);
   }
 }
 

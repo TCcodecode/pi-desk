@@ -599,10 +599,11 @@ export function App() {
       const setModeProfile = api.setModeProfile;
       void (async () => {
         const sessionKey = await ensureActiveTabRuntime();
+        if (!sessionKey) return;
         const nextModeState = currentModeState();
         const mode = nextModeState.mode;
         const profile = mode === "plan" ? nextModeState.planProfile : nextModeState.executeProfile;
-        const next = await setModeProfile(mode, { ...profile, modelKey: model }, sessionKey ? { sessionKey } : undefined);
+        const next = await setModeProfile(mode, { ...profile, modelKey: model }, { sessionKey });
         applyModeState(next);
       })().catch((error) => pushError(error instanceof Error ? error.message : String(error)));
     } else {
@@ -614,10 +615,11 @@ export function App() {
       const setModeProfile = api.setModeProfile;
       void (async () => {
         const sessionKey = await ensureActiveTabRuntime();
+        if (!sessionKey) return;
         const nextModeState = currentModeState();
         const mode = nextModeState.mode;
         const profile = mode === "plan" ? nextModeState.planProfile : nextModeState.executeProfile;
-        const next = await setModeProfile(mode, { ...profile, thinkingLevel }, sessionKey ? { sessionKey } : undefined);
+        const next = await setModeProfile(mode, { ...profile, thinkingLevel }, { sessionKey });
         applyModeState(next);
       })().catch((error) => pushError(error instanceof Error ? error.message : String(error)));
     } else {

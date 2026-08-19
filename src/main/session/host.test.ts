@@ -1377,6 +1377,10 @@ describe("PiHost", () => {
     const snap = host.previewSession({ cwd: "/p", sessionPath });
     expect(snap.preview).toBe(true);
     expect(snap.session.sessionId).toBe("sid-preview");
+    expect(host.listLiveSessions()).toHaveLength(0);
+    await expect(host.setModeProfile("execute", { thinkingLevel: "medium" })).resolves.toMatchObject({
+      mode: "execute",
+    });
     expect(snap.timeline.some((item) => item.kind === "user")).toBe(true);
     expect(host.listLiveSessions()).toHaveLength(0);
   });
