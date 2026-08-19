@@ -70,42 +70,26 @@ function clearForegroundSession(): void {
 
 function findLiveSessionForTab(tab: SessionTab) {
   if (useAppStore.getState().getView(tab.id)?.cold) return undefined;
-  const hit = useWorkspaceStore.getState().findLiveForTab(tab);
-  if (hit) return hit;
-  const current = useAppStore.getState().session;
-  const activeTabId = useWorkspaceStore.getState().activeTabId;
-  if (
-    activeTabId === tab.id &&
-    current.sessionId &&
-    (
-      (tab.sessionFile && current.sessionFile && tab.sessionFile === current.sessionFile) ||
-      (tab.sessionId && tab.sessionId === current.sessionId) ||
-      (!tab.sessionFile && !tab.sessionId)
-    )
-  ) {
-    return {
-      sessionKey: tab.id,
-      sessionId: current.sessionId,
-      sessionFile: current.sessionFile,
-      cwd: current.cwd,
-      projectId: tab.projectId,
-      name: current.name,
-      status: current.status,
-    };
-  }
-  return undefined;
+  return useWorkspaceStore.getState().findLiveForTab(tab);
 }
 
-const inflightStarts = new Map<string, Promise<unknown>>();
+const inflightStarts = new Map<string, { kind: "preview" | "start"; work: Promise<unknown> }>();
+const startedKeys = new Set<string>();
 
-function trackStart<T>(key: string, work: Promise<T>): Promise<T> {
-  inflightStarts.set(key, work);
+export function resetSessionStarts(): void {
+  inflightStarts.clear();
+  startedKeys.clear();
+}
+
+function trackStart<T>(key: string, work: Promise<T>, kind: "preview" | "start"): Promise<T> {
+  inflightStarts.set(key, { kind, work });
   return work.finally(() => {
-    if (inflightStarts.get(key) === work) inflightStarts.delete(key);
+    if (inflightStarts.get(key)?.work === work) inflightStarts.delete(key);
   });
 }
 
 export function dropViewAndMaybeDispose(key: string): void {
+  startedKeys.delete(key);
   const live = useWorkspaceStore.getState().liveSessions.find((item) => item.sessionKey === key);
   const view = useAppStore.getState().getView(key);
   const status = live?.status ?? view?.session.status;
@@ -342,49 +326,39 @@ export async function ensureActiveTabRuntime(): Promise<string | undefined> {
   if (!tabId) return undefined;
   const tab = useWorkspaceStore.getState().tabs.find((item) => item.id === tabId);
   if (!tab) return undefined;
+
+  const inflight = inflightStarts.get(tabId);
+  if (inflight) await inflight.work;
+
+  const currentTab = useWorkspaceStore.getState().tabs.find((item) => item.id === tabId) ?? tab;
+  if (findLiveSessionForTab(currentTab) || startedKeys.has(tabId) || inflight?.kind === "start") {
+    return tabId;
+  }
+
   const view = useAppStore.getState().getView(tabId);
-  const pending = inflightStarts.get(tabId);
-  if (pending) {
-    await pending;
-    return tabId;
+  const project = useAppStore.getState().projects?.find((item) => item.id === currentTab.projectId);
+  const cwd = project?.path ?? currentTab.projectId;
+  const sessionPath = currentTab.sessionFile || view?.session.sessionFile;
+  const started = await trackStart(
+    tabId,
+    api?.startSession({
+      cwd,
+      sessionKey: tabId,
+      ...(sessionPath ? { sessionPath } : {}),
+    }) ?? Promise.resolve(undefined),
+    "start",
+  );
+  if (!started) throw new Error("Pi runtime has not been started");
+  startedKeys.add(tabId);
+  const current = useAppStore.getState().getView(tabId);
+  if (current) {
+    useAppStore.getState().putView({
+      ...current,
+      cold: false,
+      session: { ...current.session, ...started.session },
+    });
   }
-  if (view?.hydrate === "ready" && findLiveSessionForTab(tab)) return tabId;
-  if (view?.cold && tab.sessionFile) {
-    const project = useAppStore.getState().projects?.find((item) => item.id === tab.projectId);
-    const cwd = project?.path ?? tab.projectId;
-    const started = await trackStart(
-      tabId,
-      api?.startSession({ cwd, sessionPath: tab.sessionFile, sessionKey: tabId }) ?? Promise.resolve(undefined),
-    );
-    if (started) {
-      const current = useAppStore.getState().getView(tabId);
-      if (current) {
-        useAppStore.getState().putView({
-          ...current,
-          cold: false,
-          session: { ...current.session, ...started.session },
-        });
-      }
-    }
-    if (findLiveSessionForTab(useWorkspaceStore.getState().tabs.find((item) => item.id === tabId) ?? tab)
-      || useAppStore.getState().getView(tabId)?.session.sessionId) {
-      return tabId;
-    }
-  }
-  if (view?.hydrate === "loading" || (view?.hydrate === "ready" && !findLiveSessionForTab(tab))) {
-    await activateTab(tabId);
-    if (findLiveSessionForTab(useWorkspaceStore.getState().tabs.find((item) => item.id === tabId) ?? tab)) {
-      return tabId;
-    }
-  }
-  if (findLiveSessionForTab(tab)) return tabId;
-  await activateTab(tabId);
-  const refreshed = useWorkspaceStore.getState().tabs.find((item) => item.id === tabId);
-  if (refreshed && findLiveSessionForTab(refreshed)) return tabId;
-  if (useWorkspaceStore.getState().activeTabId === tabId && useAppStore.getState().session.sessionId) {
-    return tabId;
-  }
-  throw new Error("当前会话尚未成功启动，请先激活该标签页后再试。");
+  return tabId;
 }
 
 export async function startNewSession(projectId: string): Promise<void> {
@@ -424,7 +398,9 @@ export async function startNewSession(projectId: string): Promise<void> {
   const started = await trackStart(
     sessionKey,
     api?.startSession({ cwd: project.path, sessionKey }) ?? Promise.resolve(undefined),
+    "start",
   );
+  if (started) startedKeys.add(sessionKey);
   if (!isCurrentActivation(navigation)) return;
   if (started) {
     const current = useAppStore.getState().getView(sessionKey) ?? createView(sessionKey, { hydrate: "ready" });
@@ -529,6 +505,7 @@ export async function openWorkspaceSession(
       api?.previewSession
         ? api.previewSession({ cwd, sessionPath })
         : api?.startSession({ cwd, sessionPath, sessionKey }) ?? Promise.resolve(undefined),
+      api?.previewSession ? "preview" : "start",
     );
   } catch (error) {
     const current = useAppStore.getState().getView(sessionKey);

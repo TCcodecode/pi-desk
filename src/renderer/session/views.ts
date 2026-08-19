@@ -52,19 +52,22 @@ export function oldestIdFrom(timeline: TimelineItem[]): string | undefined {
 }
 
 export function applySnapshotToView(view: SessionView, snap: PiSnapshot): SessionView {
+  const cold = snap.preview === true ? true : view.cold === true && snap.preview !== false;
+  const keepTimeline = cold && (snap.timeline?.length ?? 0) === 0 && view.timeline.length > 0;
+  const timeline = keepTimeline ? view.timeline : (snap.timeline ?? []);
   return {
     ...view,
     hydrate: "ready",
     session: { ...view.session, ...snap.session },
-    timeline: snap.timeline ?? [],
-    toolCalls: snap.toolCalls ?? {},
+    timeline,
+    toolCalls: keepTimeline ? view.toolCalls : (snap.toolCalls ?? {}),
     queue: snap.queue ?? view.queue,
     lastError: snap.lastError,
     activeTaskId: snap.session.todos?.find((todo) => todo.status === "in_progress")?.id,
-    hasMore: snap.timelineHasMore === true,
-    oldestId: oldestIdFrom(snap.timeline ?? []),
+    hasMore: keepTimeline ? view.hasMore : snap.timelineHasMore === true,
+    oldestId: oldestIdFrom(timeline),
     errorMessage: undefined,
-    cold: snap.preview === true,
+    cold,
   };
 }
 

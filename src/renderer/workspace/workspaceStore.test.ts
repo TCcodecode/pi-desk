@@ -8,6 +8,7 @@ import {
   resetWorkspaceRuntime,
   useWorkspaceStore,
 } from "./workspaceStore";
+import { resetSessionStarts } from "./workspaceActions";
 
 const tab = (id: string, extra: Partial<SessionTab> = {}): SessionTab => ({
   id,
@@ -22,6 +23,7 @@ describe("workspaceStore", () => {
   beforeEach(() => {
     localStorage.clear();
     resetWorkspaceRuntime();
+    resetSessionStarts();
     useWorkspaceStore.setState({
       tabs: [],
       activeTabId: undefined,
@@ -32,6 +34,7 @@ describe("workspaceStore", () => {
   afterEach(() => {
     localStorage.clear();
     resetWorkspaceRuntime();
+    resetSessionStarts();
   });
 
   test("replaceWorkingSet persists tabs and the active id", () => {
@@ -130,6 +133,7 @@ describe("activateTab stale generation", () => {
   beforeEach(() => {
     localStorage.clear();
     resetWorkspaceRuntime();
+    resetSessionStarts();
     useWorkspaceStore.setState({
       tabs: [tab("a"), tab("b")],
       activeTabId: "a",
@@ -269,6 +273,7 @@ describe("startNewSession and openWorkspaceSession", () => {
     const { createInitialState, useAppStore } = await import("../session/store");
     localStorage.clear();
     resetWorkspaceRuntime();
+    resetSessionStarts();
     useWorkspaceStore.setState({ tabs: [], activeTabId: undefined, liveSessions: [] });
     useAppStore.setState({
       ...createInitialState(),
@@ -347,6 +352,92 @@ describe("startNewSession and openWorkspaceSession", () => {
     expect(focusSession).not.toHaveBeenCalled();
   });
 
+  test("ensureActiveTabRuntime starts a cold preview instead of prompting without a slot", async () => {
+    const { useAppStore } = await import("../session/store");
+    const { createView } = await import("../session/views");
+    const { ensureActiveTabRuntime } = await import("./workspaceActions");
+    const tabId = "file:/tmp/history.jsonl";
+    useWorkspaceStore.getState().replaceWorkingSet([
+      tab(tabId, { sessionFile: "/tmp/history.jsonl", sessionId: "s-hist", projectId: "/tmp/project" }),
+    ], tabId);
+    useAppStore.getState().putView({
+      ...createView(tabId, {
+        hydrate: "ready",
+        title: "History",
+        session: {
+          sessionId: "s-hist",
+          sessionFile: "/tmp/history.jsonl",
+          cwd: "/tmp/project",
+          name: "History",
+        },
+      }),
+      cold: true,
+    });
+    useAppStore.getState().bindForeground(tabId);
+    const startSession = vi.fn(async () => ({
+      ...useAppStore.getState(),
+      session: {
+        ...useAppStore.getState().session,
+        sessionId: "s-hist",
+        sessionFile: "/tmp/history.jsonl",
+        cwd: "/tmp/project",
+      },
+    }));
+    window.pi = {
+      startSession,
+      listLiveSessions: vi.fn(async () => []),
+    } as never;
+
+    await expect(ensureActiveTabRuntime()).resolves.toBe(tabId);
+    expect(startSession).toHaveBeenCalledWith({
+      cwd: "/tmp/project",
+      sessionPath: "/tmp/history.jsonl",
+      sessionKey: tabId,
+    });
+    expect(useAppStore.getState().getView(tabId)?.cold).toBe(false);
+  });
+
+  test("ensureActiveTabRuntime starts when a previewed session has an id but no host slot", async () => {
+    const { useAppStore } = await import("../session/store");
+    const { createView } = await import("../session/views");
+    const { ensureActiveTabRuntime } = await import("./workspaceActions");
+    const tabId = "file:/tmp/history.jsonl";
+    useWorkspaceStore.getState().replaceWorkingSet([
+      tab(tabId, { sessionFile: "/tmp/history.jsonl", sessionId: "s-hist", projectId: "/tmp/project" }),
+    ], tabId);
+    useAppStore.getState().putView(createView(tabId, {
+      hydrate: "ready",
+      title: "History",
+      session: {
+        sessionId: "s-hist",
+        sessionFile: "/tmp/history.jsonl",
+        cwd: "/tmp/project",
+        name: "History",
+      },
+    }));
+    useAppStore.getState().bindForeground(tabId);
+    const startSession = vi.fn(async () => ({
+      ...useAppStore.getState(),
+      session: {
+        ...useAppStore.getState().session,
+        sessionId: "s-hist",
+        sessionFile: "/tmp/history.jsonl",
+        cwd: "/tmp/project",
+      },
+    }));
+    window.pi = {
+      startSession,
+      listLiveSessions: vi.fn(async () => []),
+    } as never;
+
+    await expect(ensureActiveTabRuntime()).resolves.toBe(tabId);
+    expect(startSession).toHaveBeenCalledWith({
+      cwd: "/tmp/project",
+      sessionPath: "/tmp/history.jsonl",
+      sessionKey: tabId,
+    });
+  });
+
   test("openWorkspaceSession focuses an existing tab instead of adding another", async () => {
     const { openWorkspaceSession } = await import("./workspaceActions");
     const { activateTab } = await import("./workspaceActions");
@@ -408,6 +499,7 @@ describe("rename, delete, and clone session", () => {
     const { createInitialState, useAppStore } = await import("../session/store");
     localStorage.clear();
     resetWorkspaceRuntime();
+    resetSessionStarts();
     useWorkspaceStore.setState({
       tabs: [tab("keep", { sessionFile: "/tmp/keep.jsonl", title: "Old name" })],
       activeTabId: "keep",

@@ -55,6 +55,23 @@ describe("SessionView", () => {
     expect(next.timeline).toHaveLength(2);
   });
 
+  test("applySnapshotToView keeps a cold preview when a later snapshot is not a preview", () => {
+    const previewed = applySnapshotToView(createView("k"), {
+      ...createInitialState(),
+      session: { ...createInitialState().session, sessionId: "s1", sessionFile: "/tmp/a.jsonl" },
+      timeline: [{ id: "t0", kind: "user", content: "hello", status: "completed" }],
+      preview: true,
+    });
+    expect(previewed.cold).toBe(true);
+    const next = applySnapshotToView(previewed, {
+      ...createInitialState(),
+      session: createInitialState().session,
+      timeline: [],
+    });
+    expect(next.cold).toBe(true);
+    expect(next.timeline).toEqual(previewed.timeline);
+  });
+
   test("remapViewKey moves the view", () => {
     const views = { tmp: createView("tmp", { hydrate: "ready" }) };
     const next = remapViewKey(views, "tmp", "file:/x.jsonl");
