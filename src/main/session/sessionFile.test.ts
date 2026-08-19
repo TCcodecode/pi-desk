@@ -1,7 +1,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { listSessionFiles, loadOlderFromFile, readSessionTail } from "./sessionFile.js";
 import { hydrateTimeline } from "./snapshot.js";
 
@@ -128,5 +128,26 @@ describe("session file tail", () => {
     expect(listSessionFiles(dir)[0]?.name).toBe("Current title");
     expect(listSessionFiles(dir)[0]?.model).toBe("deepseek/v4");
     expect(listSessionFiles(dir)[0]?.thinkingLevel).toBe("low");
+  });
+
+  test("listing and tail preview never JSON.parse oversized tool lines", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pi-session-skip-"));
+    const path = join(dir, "skip.jsonl");
+    writeJsonl(path, [
+      { type: "session", version: 3, id: "skip", timestamp: "2026-01-01T00:00:00.000Z", cwd: "/tmp/project" },
+      { type: "session_info", id: "info", parentId: null, timestamp: "2026-01-01T00:00:00.000Z", name: "Skip huge" },
+      { type: "message", id: "u0", parentId: "info", timestamp: "2026-01-01T00:00:01.000Z", message: { role: "user", content: "q0", id: "u0" } },
+      { type: "message", id: "huge", parentId: "u0", timestamp: "2026-01-01T00:00:02.000Z", message: { role: "toolResult", content: "H".repeat(2_000_000), id: "huge" } },
+      { type: "message", id: "a0", parentId: "huge", timestamp: "2026-01-01T00:00:03.000Z", message: { role: "assistant", content: "done", id: "a0" } },
+    ]);
+    const parsed = vi.spyOn(JSON, "parse");
+    const listed = listSessionFiles(dir);
+    const tail = readSessionTail(path, 30);
+    const longest = Math.max(0, ...parsed.mock.calls.map((call) => String(call[0] ?? "").length));
+    parsed.mockRestore();
+    expect(listed[0]?.name).toBe("Skip huge");
+    expect(tail.messages.some((message) => message.id === "u0")).toBe(true);
+    expect(tail.messages.some((message) => message.id === "huge")).toBe(false);
+    expect(longest).toBeLessThan(100_000);
   });
 });

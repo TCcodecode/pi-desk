@@ -10,8 +10,11 @@ import { hydrateTimeline, loadOlderItems } from "./snapshot.js";
 import type { SessionSummary, TimelineItem } from "../../shared/protocol.js";
 
 export const SESSION_LIST_HEAD_BYTES = 64 * 1024;
+export const SESSION_LIST_TAIL_BYTES = 64 * 1024;
 export const SESSION_VIEW_CHUNK_BYTES = 256 * 1024;
 export const SESSION_VIEW_MAX_BYTES = 8 * 1024 * 1024;
+/** Skip JSONL rows larger than this. Tool results this big freeze the main process. */
+export const SESSION_LINE_MAX = 64 * 1024;
 
 export function defaultSessionDir(cwd: string): string {
   const resolvedCwd = resolve(cwd);
@@ -37,17 +40,36 @@ type FileEntry = SessionEntry | {
   timestamp?: string;
 };
 
+function trimOversizePrefix(text: string): string {
+  const newline = text.indexOf("\n");
+  if (newline === -1) return text.length > SESSION_LINE_MAX ? "" : text;
+  return newline > SESSION_LINE_MAX ? text.slice(newline + 1) : text;
+}
+
 function parseEntries(text: string, dropLeadingIncomplete: boolean): FileEntry[] {
-  const lines = text.split("\n");
-  if (dropLeadingIncomplete) lines.shift();
   const entries: FileEntry[] = [];
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    try {
-      entries.push(JSON.parse(line) as FileEntry);
-    } catch {
-      // Mid-line slices and corrupt rows are skipped.
+  let start = 0;
+  if (dropLeadingIncomplete) {
+    const newline = text.indexOf("\n");
+    if (newline === -1) return entries;
+    start = newline + 1;
+  }
+  while (start < text.length) {
+    const newline = text.indexOf("\n", start);
+    const end = newline === -1 ? text.length : newline;
+    const length = end - start;
+    if (length > 0 && length <= SESSION_LINE_MAX) {
+      const line = text.slice(start, end);
+      if (line.trim()) {
+        try {
+          entries.push(JSON.parse(line) as FileEntry);
+        } catch {
+          // Mid-line slices and corrupt rows are skipped.
+        }
+      }
     }
+    if (newline === -1) break;
+    start = newline + 1;
   }
   return entries;
 }
@@ -101,7 +123,7 @@ function readLatestMeta(
   while (scanned < size && scanned < maxBytes) {
     const length = Math.min(SESSION_VIEW_CHUNK_BYTES, size - scanned);
     const start = size - scanned - length;
-    raw = readSlice(sessionPath, start, length) + raw;
+    raw = trimOversizePrefix(readSlice(sessionPath, start, length) + raw);
     scanned += length;
     applyLatestMeta(parseEntries(raw, start > 0), meta);
     if (meta.name && meta.model && meta.thinkingLevel) return meta;
@@ -176,10 +198,15 @@ export function listSessionFiles(dir: string): SessionSummary[] {
     try {
       const stats = statSync(sessionFile);
       const head = readSlice(sessionFile, 0, Math.min(SESSION_LIST_HEAD_BYTES, stats.size));
+      const tailStart = Math.max(0, stats.size - SESSION_LIST_TAIL_BYTES);
+      const tail = tailStart > 0 ? readSlice(sessionFile, tailStart, stats.size - tailStart) : "";
       const headEntries = parseEntries(head, false);
+      const tailEntries = tailStart > 0 ? parseEntries(tail, true) : [];
       const header = headEntries.find((entry) => entry.type === "session") as { id?: string; cwd?: string } | undefined;
       if (!header?.id) continue;
-      const meta = readLatestMeta(sessionFile);
+      const meta: { name?: string; model?: { provider?: string; id?: string }; thinkingLevel?: string } = {};
+      applyLatestMeta(tailEntries, meta);
+      applyLatestMeta(headEntries, meta);
       summaries.push({
         sessionId: header.id,
         cwd: typeof header.cwd === "string" ? header.cwd : "",
@@ -222,7 +249,7 @@ export function readSessionTail(sessionPath: string, tailTurns = 30): {
   while (scanned < size && scanned < SESSION_VIEW_MAX_BYTES) {
     const length = Math.min(SESSION_VIEW_CHUNK_BYTES, size - scanned);
     start = size - scanned - length;
-    raw = readSlice(sessionPath, start, length) + raw;
+    raw = trimOversizePrefix(readSlice(sessionPath, start, length) + raw);
     scanned += length;
     collected = collectFromEntries(parseEntries(raw, start > 0));
     if (countUsers(collected.messages) > tailTurns || start === 0) break;
@@ -253,7 +280,7 @@ export function loadOlderFromFile(
   while (scanned < size && scanned < maxBytes) {
     const length = Math.min(SESSION_VIEW_CHUNK_BYTES, size - scanned);
     start = size - scanned - length;
-    raw = readSlice(sessionPath, start, length) + raw;
+    raw = trimOversizePrefix(readSlice(sessionPath, start, length) + raw);
     scanned += length;
     messages = collectFromEntries(parseEntries(raw, start > 0)).messages;
     if (messages.some((message) => message.id === beforeId) && countUsers(messages) > limit) break;

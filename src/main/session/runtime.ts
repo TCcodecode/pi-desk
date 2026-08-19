@@ -13,6 +13,7 @@ import { HttpWorkbenchStore } from "../http/store.js";
 import { registerHttpWorkbenchTools } from "../http/extension.js";
 import { PlanModeStore } from "./plan/store.js";
 import { registerPlanModeTools } from "./plan/extension.js";
+import { openSessionManagerAsync } from "./sessionOpen.js";
 import type { PiRuntimeLike, RuntimeSlot } from "./types.js";
 
 export interface CreateSdkRuntimeOptions {
@@ -30,7 +31,7 @@ export interface CreateSdkRuntimeOptions {
 
 export async function createSdkRuntime(options: CreateSdkRuntimeOptions): Promise<PiRuntimeLike> {
   const sessionManager = options.sessionPath
-    ? SessionManager.open(options.sessionPath, undefined, options.cwd)
+    ? await openSessionManagerAsync(options.sessionPath, options.cwd)
     : SessionManager.create(options.cwd);
   const createRuntime = async ({ cwd, agentDir, sessionManager: manager, sessionStartEvent }: { cwd: string; agentDir: string; sessionManager: SessionManager; sessionStartEvent?: unknown }) => {
     let boundSessionId = "";
