@@ -155,6 +155,9 @@ function makeFakeApi() {
     downloadUpdate: vi.fn(async () => undefined),
     installUpdate: vi.fn(async () => undefined),
     onUpdateState: vi.fn(() => () => undefined),
+    getCompanionState: vi.fn(async () => ({ enabled: false, listening: false, port: 17890, token: "", urls: [] })),
+    setCompanionEnabled: vi.fn(async (enabled: boolean) => ({ enabled, listening: enabled, port: 17890, token: "tok", urls: [] })),
+    rotateCompanionToken: vi.fn(async () => ({ enabled: false, listening: false, port: 17890, token: "tok", urls: [] })),
     addProject: vi.fn(async () => {
       const snapshot = await api.startSession({ cwd: "/tmp/project" });
       return {

@@ -160,6 +160,47 @@ describe("PiHost", () => {
     }
   });
 
+  test("deferres mid-turn model/effort changes until the turn ends", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "pi-defer-profile-"));
+    try {
+      const fake = createFakeRuntime(cwd);
+      const host = new PiHost({ workspaceId: "workspace-1", runtime: fake.runtime });
+
+      fake.setStreaming(true);
+      const modeState = await host.setModeProfile("execute", { thinkingLevel: "high" });
+      expect(modeState.executeProfile.thinkingLevel).toBe("high");
+      // Recorded, not applied to the running session yet.
+      expect(fake.calls.map((call) => call.method)).not.toContain("setThinkingLevel");
+
+      fake.setStreaming(false);
+      fake.emit({ type: "turn_end" });
+      expect(fake.calls.map((call) => call.method)).toContain("setThinkingLevel");
+      expect(fake.calls.find((call) => call.method === "setThinkingLevel")?.args[0]).toBe("high");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("deferres a mid-turn plan/execute switch and applies it at turn end", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "pi-defer-mode-"));
+    try {
+      const fake = createFakeRuntime(cwd);
+      const host = new PiHost({ workspaceId: "workspace-1", runtime: fake.runtime });
+
+      fake.setStreaming(true);
+      const modeState = await host.setMode("plan");
+      expect(modeState.mode).toBe("plan");
+      // Plan tool policy is not applied while the turn is still running.
+      expect(fake.session.getActiveToolNames()).toContain("edit");
+
+      fake.setStreaming(false);
+      fake.emit({ type: "turn_end" });
+      expect(fake.session.getActiveToolNames()).toEqual(["read", "grep", "find", "ls", "plan_save", "plan_list", "plan_read", "mcp_search"]);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("restores a sole session-owned plan when older mode state lacks activePlan", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "pi-plan-restore-"));
     try {
@@ -847,6 +888,40 @@ describe("PiHost", () => {
     }
   });
 
+  test("refreshAvailableModels resolves from the auth runtime when no live session exists", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "pi-models-boot-"));
+    try {
+      mkdirSync(agentDir, { recursive: true });
+      const { writeFileSync } = await import("node:fs");
+      writeFileSync(join(agentDir, "settings.json"), JSON.stringify({
+        defaultProvider: "deepseek",
+        defaultModel: "deepseek-v4-flash",
+      }));
+      writeFileSync(join(agentDir, "auth.json"), "{}");
+
+      const authRuntime = {
+        getAvailable: async () => [
+          { provider: "anthropic", id: "claude-opus-4-6", name: "Claude Opus 4.6" },
+          { provider: "deepseek", id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" },
+          { provider: "deepseek", id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
+        ],
+      };
+      const host = new PiHost({
+        workspaceId: "workspace-1",
+        agentDir,
+        authRuntimeFactory: async () => authRuntime as never,
+      });
+
+      const models = await host.refreshAvailableModels();
+      expect(models.map((m) => m.id).sort()).toEqual([
+        "deepseek/deepseek-v4-flash",
+        "deepseek/deepseek-v4-pro",
+      ].sort());
+    } finally {
+      rmSync(agentDir, { recursive: true, force: true });
+    }
+  });
+
   test("snapshot hydrates timeline from existing session messages on resume", async () => {
     const fake = createFakeRuntime();
     Object.defineProperty(fake.session, "messages", {
@@ -1374,7 +1449,7 @@ describe("PiHost", () => {
     ];
     writeFileSync(sessionPath, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
     const host = new PiHost({ workspaceId: "workspace-1" });
-    const snap = host.previewSession({ cwd: "/p", sessionPath });
+    const snap = await host.previewSession({ cwd: "/p", sessionPath });
     expect(snap.preview).toBe(true);
     expect(snap.session.sessionId).toBe("sid-preview");
     expect(host.listLiveSessions()).toHaveLength(0);

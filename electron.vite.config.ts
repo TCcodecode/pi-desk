@@ -1,5 +1,6 @@
 import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 import react from "@vitejs/plugin-react";
+import { buildCompanionUi } from "./src/main/companion/buildUi";
 
 export default defineConfig({
   main: {
@@ -44,6 +45,18 @@ export default defineConfig({
     },
   },
   renderer: {
-    plugins: [react()],
+    plugins: [
+      react(),
+      {
+        name: "companion-iife",
+        // Vite empties outDir after buildStart, so write after emit.
+        async closeBundle() {
+          await buildCompanionUi();
+        },
+        configureServer() {
+          void buildCompanionUi();
+        },
+      },
+    ],
   },
 });

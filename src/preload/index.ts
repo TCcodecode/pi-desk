@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import type { AppUpdateState, PiApi, PiEvent } from "../shared/protocol.js";
+import type { AppUpdateState, CompanionState, PiApi, PiEvent } from "../shared/protocol.js";
 
 const api: PiApi = {
   getSnapshot: () => ipcRenderer.invoke("pi:getSnapshot"),
@@ -79,6 +79,9 @@ const api: PiApi = {
   checkForUpdate: () => ipcRenderer.invoke("pi:checkForUpdate"),
   downloadUpdate: () => ipcRenderer.invoke("pi:downloadUpdate"),
   installUpdate: () => ipcRenderer.invoke("pi:installUpdate"),
+  getCompanionState: () => ipcRenderer.invoke("pi:getCompanionState") as Promise<CompanionState>,
+  setCompanionEnabled: (enabled) => ipcRenderer.invoke("pi:setCompanionEnabled", enabled) as Promise<CompanionState>,
+  rotateCompanionToken: () => ipcRenderer.invoke("pi:rotateCompanionToken") as Promise<CompanionState>,
   onUpdateState: (listener) => {
     const handler = (_event: IpcRendererEvent, state: unknown) => listener(state as AppUpdateState);
     ipcRenderer.on("pi:updateState", handler);

@@ -27,6 +27,10 @@ interface ImageAttachment {
   source: "picker" | "paste";
 }
 
+type AtOption =
+  | { kind: "file"; file: ProjectFileEntry }
+  | { kind: "session"; session: SessionSummary };
+
 export interface ComposerSubmitAttachment {
   name: string;
   path: string;
@@ -112,12 +116,14 @@ export function Composer({
   const [queueActionIndex, setQueueActionIndex] = useState<number | null>(null);
   const [atQuery, setAtQuery] = useState("");
   const [atPickerOpen, setAtPickerOpen] = useState(false);
+  const [atHighlighted, setAtHighlighted] = useState(0);
   const [commandQuery, setCommandQuery] = useState("");
   const [commandPickerOpen, setCommandPickerOpen] = useState(false);
   const [commandHighlighted, setCommandHighlighted] = useState(0);
   const [projectFiles, setProjectFiles] = useState<ProjectFileEntry[]>([]);
   const [filesLoading, setFilesLoading] = useState(false);
   const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
+  const [draggingAttachments, setDraggingAttachments] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const historyDraftRef = useRef("");
   const historyCaretRef = useRef<number | null>(null);
@@ -421,6 +427,28 @@ export function Composer({
     textareaRef.current?.focus();
   };
 
+  const handleAttachmentDrop = async (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setDraggingAttachments(false);
+    const dropped = Array.from(event.dataTransfer.files);
+    if (dropped.length === 0) return;
+
+    const paths: string[] = [];
+    const imageFiles: Array<{ path: string; name: string }> = [];
+    for (const file of dropped) {
+      const path = (file as File & { path?: string }).path;
+      if (!path) continue;
+      if (file.type.startsWith("image/") || isImagePath(path)) {
+        imageFiles.push({ path, name: file.name || path.split("/").pop() || "image" });
+      } else {
+        paths.push(path);
+      }
+    }
+    if (imageFiles.length > 0) await addImageAttachments(imageFiles, "picker");
+    appendPathsToText(paths);
+    textareaRef.current?.focus();
+  };
+
   const handlePaste = async (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const imageItems = Array.from(event.clipboardData.items).filter(
       (item) => item.kind === "file" && item.type.startsWith("image/"),
@@ -475,6 +503,22 @@ export function Composer({
     }).slice(0, 30);
   }, [projectFiles, atQuery]);
 
+  const atOptions = useMemo<AtOption[]>(() => [
+    ...filteredFiles.map((file) => ({ kind: "file" as const, file })),
+    ...filteredSessions.map((session) => ({ kind: "session" as const, session })),
+  ], [filteredFiles, filteredSessions]);
+
+  const selectAtOption = (index: number) => {
+    const option = atOptions[index];
+    if (!option) return;
+    if (option.kind === "file") pickFileEntry(option.file);
+    else pickSession(option.session);
+  };
+
+  useEffect(() => {
+    setAtHighlighted(0);
+  }, [atPickerOpen, atQuery]);
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && isRunning) onAbort();
@@ -505,6 +549,14 @@ export function Composer({
     return projects[0]?.id ?? "";
   }, [projectId, projects, workspacePath]);
   const resolvedProjectName = projects.find((project) => project.id === resolvedProjectId)?.name ?? workspaceName ?? "Project";
+  const commandPickerId = "composer-command-picker";
+  const atPickerId = "composer-reference-picker";
+  const activePickerId = commandPickerOpen ? commandPickerId : atPickerOpen ? atPickerId : undefined;
+  const activeDescendant = commandPickerOpen
+    ? `${commandPickerId}-option-${commandHighlighted}`
+    : atPickerOpen && atOptions[atHighlighted]
+      ? `${atPickerId}-option-${atHighlighted}`
+      : undefined;
 
   return (
     <div className="composer-area live-composer">
@@ -522,11 +574,31 @@ export function Composer({
           onEditingTextChange={setEditingQueueText}
         />
       )}
-      <div className="composer-card">
+      <div
+        className={`composer-card${draggingAttachments ? " is-dragging" : ""}`}
+        aria-busy={sending}
+        onDragOver={(event) => {
+          if (event.dataTransfer.types.includes("Files")) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "copy";
+            setDraggingAttachments(true);
+          }
+        }}
+        onDragLeave={(event) => {
+          const relatedTarget = event.relatedTarget;
+          if (!(relatedTarget instanceof Node) || !event.currentTarget.contains(relatedTarget)) setDraggingAttachments(false);
+        }}
+        onDrop={(event) => void handleAttachmentDrop(event)}
+      >
+        {draggingAttachments && <div className="composer-drop-hint" role="status">Drop files to attach</div>}
         <textarea
           className="composer-input"
           ref={textareaRef}
           aria-label="Message"
+          aria-autocomplete="list"
+          aria-controls={activePickerId}
+          aria-expanded={Boolean(activePickerId)}
+          aria-activedescendant={activeDescendant}
           value={text}
           placeholder={isRunning ? "Queue a follow-up..." : placeholder ?? "Ask Pi anything about this workspace..."}
           onPaste={(event) => {
@@ -559,6 +631,7 @@ export function Composer({
             if (atIndex !== -1 && !/\w/.test(prevChar)) {
               atCaretRef.current = caret;
               setAtQuery(beforeCaret.slice(atIndex + 1));
+              setAtHighlighted(0);
               setAtPickerOpen(true);
             } else if (atIndex === -1) {
               setAtPickerOpen(false);
@@ -595,7 +668,28 @@ export function Composer({
                 }
               }
             }
-            if (atPickerOpen && (event.key === "ArrowUp" || event.key === "ArrowDown")) return;
+            if (atPickerOpen) {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                setAtHighlighted((current) => Math.min(current + 1, Math.max(atOptions.length - 1, 0)));
+                return;
+              }
+              if (event.key === "ArrowUp") {
+                event.preventDefault();
+                setAtHighlighted((current) => Math.max(current - 1, 0));
+                return;
+              }
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                selectAtOption(atHighlighted);
+                return;
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setAtPickerOpen(false);
+                return;
+              }
+            }
             if (
               (event.key === "ArrowUp" || event.key === "ArrowDown") &&
               !event.shiftKey &&
@@ -619,6 +713,7 @@ export function Composer({
         />
         {commandPickerOpen && (
           <CommandPicker
+            id={commandPickerId}
             commands={commands}
             query={commandQuery}
             highlighted={commandHighlighted}
@@ -627,7 +722,7 @@ export function Composer({
           />
         )}
         {atPickerOpen && (
-          <div className="at-picker" role="listbox" aria-label="Reference picker">
+          <div id={atPickerId} className="at-picker" role="listbox" aria-label="Reference picker">
             <div className="at-picker-group">
               <div className="at-picker-label">Files</div>
               {filesLoading ? (
@@ -641,17 +736,24 @@ export function Composer({
                 </button>
               ) : (
                 filteredFiles.map((file) => (
-                  <button
+                  <div
                     key={file.path}
-                    type="button"
-                    className="at-picker-item"
-                    onClick={() => pickFileEntry(file)}
+                    id={`${atPickerId}-option-${atOptions.findIndex((option) => option.kind === "file" && option.file.path === file.path)}`}
+                    role="option"
+                    aria-selected={atHighlighted === atOptions.findIndex((option) => option.kind === "file" && option.file.path === file.path)}
                   >
-                    <span className="at-picker-icon" aria-hidden>
-                      <AppIcon name={file.isDir ? "folder" : "file"} size="sm" />
-                    </span>
-                    <span className="at-picker-name">{file.path}</span>
-                  </button>
+                    <button
+                      type="button"
+                      className="at-picker-item"
+                      onMouseEnter={() => setAtHighlighted(atOptions.findIndex((option) => option.kind === "file" && option.file.path === file.path))}
+                      onClick={() => pickFileEntry(file)}
+                    >
+                      <span className="at-picker-icon" aria-hidden>
+                        <AppIcon name={file.isDir ? "folder" : "file"} size="sm" />
+                      </span>
+                      <span className="at-picker-name">{file.path}</span>
+                    </button>
+                  </div>
                 ))
               )}
             </div>
@@ -661,29 +763,37 @@ export function Composer({
                 <div className="at-picker-empty">No matching sessions</div>
               ) : (
                 filteredSessions.map((session) => (
-                  <button
+                  <div
                     key={session.sessionId}
-                    type="button"
-                    className="at-picker-item"
-                    onClick={() => pickSession(session)}
+                    id={`${atPickerId}-option-${atOptions.findIndex((option) => option.kind === "session" && option.session.sessionId === session.sessionId)}`}
+                    role="option"
+                    aria-selected={atHighlighted === atOptions.findIndex((option) => option.kind === "session" && option.session.sessionId === session.sessionId)}
                   >
-                    <span className="at-picker-icon" aria-hidden>
-                      <AppIcon name="messageSquare" size="sm" />
-                    </span>
-                    <span className="at-picker-name">{session.name}</span>
-                    <span className="at-picker-meta">{new Date(session.updatedAt).toLocaleDateString()}</span>
-                  </button>
+                    <button
+                      type="button"
+                      className="at-picker-item"
+                      onMouseEnter={() => setAtHighlighted(atOptions.findIndex((option) => option.kind === "session" && option.session.sessionId === session.sessionId))}
+                      onClick={() => pickSession(session)}
+                    >
+                      <span className="at-picker-icon" aria-hidden>
+                        <AppIcon name="messageSquare" size="sm" />
+                      </span>
+                      <span className="at-picker-name">{session.name}</span>
+                      <span className="at-picker-meta">{new Date(session.updatedAt).toLocaleDateString()}</span>
+                    </button>
+                  </div>
                 ))
               )}
             </div>
           </div>
         )}
         {attachments.length > 0 && (
-          <div className="composer-attachments" aria-label="Selected image attachments">
+          <div className="composer-attachments" role="list" aria-label="Selected image attachments">
             {attachments.map((attachment) => (
               <div
                 key={attachment.id}
                 className="composer-attachment-card"
+                role="listitem"
                 aria-label={`Attachment preview ${attachment.name}`}
               >
                 <img src={attachment.previewUrl} alt={attachment.name} />

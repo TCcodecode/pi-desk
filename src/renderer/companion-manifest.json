@@ -1,0 +1,8 @@
+{
+  "name": "PI Desk",
+  "short_name": "PI Desk",
+  "display": "standalone",
+  "start_url": "/",
+  "background_color": "#ffffff",
+  "theme_color": "#202020"
+}

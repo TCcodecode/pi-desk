@@ -90,6 +90,13 @@ export function subscribeHostEvents(
   void api.getSnapshot().then(async (snapshot) => {
     if (!active) return;
     useAppStore.getState().applyWorkspaceSnapshot(snapshot);
+    // Boot has no live session yet, so the snapshot's model list is empty.
+    // Pull the configured models explicitly (resolves via the auth runtime).
+    if (api.getModels) {
+      void api.getModels().then((models) => {
+        if (active && models.length > 0) useAppStore.setState({ models });
+      }).catch(() => undefined);
+    }
     const projects = await api.listProjects?.();
     if (projects && active) {
       const activeProjectId = snapshot.activeProjectId ?? projects[0]?.id;

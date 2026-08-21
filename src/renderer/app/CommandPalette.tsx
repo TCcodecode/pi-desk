@@ -66,12 +66,14 @@ export function CommandPalette({ open, commands, onSelect, onClose }: { open: bo
 }
 
 export function CommandPicker({
+  id,
   commands,
   query,
   highlighted,
   onHighlight,
   onSelect,
 }: {
+  id?: string;
   commands: PaletteCommand[];
   query: string;
   highlighted: number;
@@ -81,13 +83,14 @@ export function CommandPicker({
   const filtered = useMemo(() => filterPaletteCommands(commands, query), [commands, query]);
 
   return (
-    <div className="command-picker" role="listbox" aria-label="Slash commands">
+    <div id={id} className="command-picker" role="listbox" aria-label="Slash commands">
       {filtered.length === 0 ? (
         <div className="command-picker-empty">No commands match “/{query}”</div>
       ) : (
         filtered.slice(0, 8).map((command, index) => (
           <button
             key={command.id}
+            id={id ? `${id}-option-${index}` : undefined}
             type="button"
             role="option"
             aria-selected={index === highlighted}

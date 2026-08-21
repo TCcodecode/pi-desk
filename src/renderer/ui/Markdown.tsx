@@ -24,7 +24,11 @@ export const Markdown = memo(function Markdown({ content, plain = false }: { con
               href={href}
               onClick={(event) => {
                 event.preventDefault();
-                void window.pi?.openExternal?.(href ?? "");
+                if (window.pi?.openExternal) {
+                  void window.pi.openExternal(href ?? "");
+                  return;
+                }
+                window.open(href, "_blank", "noopener,noreferrer");
               }}
             >
               {children}

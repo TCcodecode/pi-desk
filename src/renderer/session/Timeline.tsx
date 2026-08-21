@@ -525,16 +525,22 @@ function ToolGroupView({ group }: { group: ToolGroup }) {
   const duration = groupDuration(group.items);
   const dangerous = group.items.some(isDangerousTool);
   const toggle = () => setExpanded((value) => !value);
+  const detailsId = `timeline-details-${group.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
   return (
     <article className={`timeline-item tool-item tool-group completed ${dangerous ? "is-dangerous" : ""}`}>
-      <div
+      <button
+        type="button"
         className="timeline-item-heading toggleable"
-        role="button"
-        tabIndex={0}
         aria-expanded={expanded}
+        aria-controls={detailsId}
         aria-label={`${expanded ? "Collapse" : "Expand"} ${label}`}
         onClick={toggle}
-        onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); } }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            toggle();
+          }
+        }}
       >
         <span className="timeline-icon tool" aria-hidden><AppIcon name="circleCheck" size="xs" /></span>
         <span className={`timeline-icon tool-action tool-action-${group.category}`} aria-hidden><AppIcon name={presentation.icon} size="xs" /></span>
@@ -543,9 +549,9 @@ function ToolGroupView({ group }: { group: ToolGroup }) {
         {presentation.preview && <><span className="tool-sep">·</span><span className="tool-inline-preview">{presentation.preview}</span></>}
         {duration && <span className="timeline-duration">{duration}</span>}
         <AppIcon name="chevronRight" size="xs" className={`timeline-chevron ${expanded ? "open" : ""}`} />
-      </div>
+      </button>
       {expanded && (
-        <div className="tool-group-body">
+        <div id={detailsId} className="tool-group-body">
           {group.thinking.map((thinking) => <TimelineItemView key={thinking.id} item={thinking} interruptedUserMessageIds={EMPTY_MESSAGE_ID_SET} />)}
           {group.items.map((tool) => <TimelineItemView key={tool.id} item={tool} interruptedUserMessageIds={EMPTY_MESSAGE_ID_SET} />)}
         </div>
@@ -608,16 +614,23 @@ const TimelineItemView = memo(function TimelineItemView({
     const duration = timelineDuration(item);
     const dangerous = isDangerousTool(item);
     const status = item.status === "running" ? "running" : item.status === "error" ? "failed" : undefined;
+    const statusLabel = item.status === "running" ? "Running" : item.status === "error" ? "Failed" : "Complete";
+    const detailsId = `timeline-details-${item.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
     return (
-      <article className={`timeline-item tool-item ${item.status} ${dangerous ? "is-dangerous" : ""}`}>
-        <div
+      <article className={`timeline-item tool-item ${item.status} ${dangerous ? "is-dangerous" : ""}`} aria-label={`${presentation.label}: ${statusLabel}`}>
+        <button
+          type="button"
           className="timeline-item-heading toggleable"
-          role="button"
-          tabIndex={0}
           aria-expanded={expanded}
+          aria-controls={detailsId}
           aria-label={`${expanded ? "Collapse" : "Expand"} ${presentation.label} (${item.toolName})`}
           onClick={toggle}
-          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              toggle();
+            }
+          }}
         >
           <span className="timeline-icon tool" aria-hidden>
             <AppIcon name={item.status === "error" ? "circleAlert" : item.status === "completed" ? "circleCheck" : "circleDot"} size="xs" />
@@ -631,11 +644,11 @@ const TimelineItemView = memo(function TimelineItemView({
           <span className="tool-inline-preview">{preview || item.status}</span>
           {resultSummary && <span className={`tool-result-summary ${item.status === "error" ? "failed" : ""}`}>{resultSummary}</span>}
           {duration && <span className="timeline-duration">{duration}</span>}
-          {status && <span className={`timeline-status ${item.status === "error" ? "failed" : ""}`}>{status}</span>}
+          <span className={`timeline-status ${item.status === "error" ? "failed" : ""}`} role={item.status === "running" ? "status" : undefined} aria-live={item.status === "running" ? "polite" : undefined}>{status ?? "complete"}</span>
           <AppIcon name="chevronRight" size="xs" className={`timeline-chevron ${expanded ? "open" : ""}`} />
-        </div>
+        </button>
         {expanded && (hasInput || hasOutput || hasChange) && (
-          <div className="tool-body">
+          <div id={detailsId} className="tool-body">
             {hasChange && item.change && <ToolDiff change={item.change} />}
             {hasInput && (
               <div className="tool-body-block">
@@ -659,24 +672,30 @@ const TimelineItemView = memo(function TimelineItemView({
     const duration = timelineDuration(item);
     const summary = thinkingSummary(item.content);
     const label = duration ? `Thinking · ${duration}` : "Thinking";
+    const detailsId = `timeline-details-${item.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
     return (
       <article className={`timeline-item thinking-item ${item.status}`}>
-        <div
+        <button
+          type="button"
           className="timeline-item-heading toggleable"
-          role="button"
-          tabIndex={0}
           aria-expanded={expanded}
+          aria-controls={detailsId}
           aria-label={`${expanded ? "Collapse" : "Expand"} thinking`}
           onClick={toggle}
-          onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); } }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              toggle();
+            }
+          }}
           title={summary}
         >
           <span className="timeline-icon thinking" aria-hidden><AppIcon name="brain" size="xs" /></span>
           <strong>{label}</strong>
           {item.status === "streaming" && <span className="timeline-status">running</span>}
           <AppIcon name="chevronRight" size="xs" className={`timeline-chevron ${expanded ? "open" : ""}`} />
-        </div>
-        {expanded && item.content.trim() && <div className="thinking-body">{item.content}</div>}
+        </button>
+        {expanded && item.content.trim() && <div id={detailsId} className="thinking-body">{item.content}</div>}
       </article>
     );
   }

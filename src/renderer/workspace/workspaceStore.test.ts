@@ -312,6 +312,48 @@ describe("startNewSession and openWorkspaceSession", () => {
     expect(useWorkspaceStore.getState().tabs[0]?.projectId).toBe("/tmp/project");
   });
 
+  test("startNewSession keeps the resolved model list on the new session view", async () => {
+    const { useAppStore } = await import("../session/store");
+    const { startNewSession } = await import("./workspaceActions");
+    const models = [
+      { id: "deepseek/deepseek-v4-flash", provider: "deepseek", label: "DeepSeek V4 Flash", available: true, thinkingLevels: [] },
+      { id: "deepseek/deepseek-v4-pro", provider: "deepseek", label: "DeepSeek V4 Pro", available: true, thinkingLevels: [] },
+    ];
+    useAppStore.setState({
+      models,
+      projects: [{ id: "/tmp/project", name: "project", path: "/tmp/project", updatedAt: "2026-08-16T00:00:00.000Z" }],
+      activeProjectId: "/tmp/project",
+    });
+    const startSession = vi.fn(async () => ({
+      ...useAppStore.getState(),
+      session: {
+        ...useAppStore.getState().session,
+        sessionId: "s-new",
+        cwd: "/tmp/project",
+        name: "Untitled",
+      },
+    }));
+    const newSession = vi.fn(async () => undefined);
+    window.pi = {
+      startSession,
+      newSession,
+      listLiveSessions: vi.fn(async () => []),
+    } as never;
+
+    await startNewSession("/tmp/project");
+
+    const activeTabId = useWorkspaceStore.getState().activeTabId;
+    const view = activeTabId ? useAppStore.getState().getView(activeTabId) : undefined;
+    expect(view?.models.map((model) => model.id).sort()).toEqual([
+      "deepseek/deepseek-v4-flash",
+      "deepseek/deepseek-v4-pro",
+    ].sort());
+    expect((useAppStore.getState().models ?? []).map((model) => model.id).sort()).toEqual([
+      "deepseek/deepseek-v4-flash",
+      "deepseek/deepseek-v4-pro",
+    ].sort());
+  });
+
   test("new session does not focusSession before the host slot exists", async () => {
     const { useAppStore } = await import("../session/store");
     const { startNewSession, activateTab, ensureActiveTabRuntime } = await import("./workspaceActions");

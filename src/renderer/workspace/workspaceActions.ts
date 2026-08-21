@@ -364,6 +364,7 @@ export async function ensureActiveTabRuntime(): Promise<string | undefined> {
       ...current,
       cold: false,
       session: { ...current.session, ...started.session },
+      models: started.models && started.models.length > 0 ? started.models : current.models,
     });
   }
   return tabId;
@@ -400,7 +401,11 @@ export async function startNewSession(projectId: string): Promise<void> {
   }
   if (reserved.evicted) dropViewAndMaybeDispose(reserved.evicted.id);
   useWorkspaceStore.getState().replaceWorkingSet(reserved.tabs, reserved.activeTabId);
-  useAppStore.getState().putView(createView(sessionKey, { hydrate: "ready", title: "Untitled" }));
+  // Seed the fresh view with the models already resolved for this workspace so
+  // the picker is never blank while the session runtime starts up.
+  const freshView = createView(sessionKey, { hydrate: "ready", title: "Untitled" });
+  freshView.models = useAppStore.getState().models ?? [];
+  useAppStore.getState().putView(freshView);
   useAppStore.getState().bindForeground(sessionKey);
 
   const started = await trackStart(
@@ -415,6 +420,7 @@ export async function startNewSession(projectId: string): Promise<void> {
     useAppStore.getState().putView({
       ...current,
       session: { ...current.session, ...started.session },
+      models: started.models && started.models.length > 0 ? started.models : current.models,
     });
     if (useWorkspaceStore.getState().activeTabId === sessionKey) {
       useAppStore.getState().bindForeground(sessionKey);

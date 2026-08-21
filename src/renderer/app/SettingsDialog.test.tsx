@@ -446,4 +446,42 @@ describe("SettingsDialog", () => {
     await waitFor(() => expect(getMcpConfig).toHaveBeenCalled());
     expect(screen.getByText(/no mcp servers configured for this project/i)).toBeInTheDocument();
   });
+
+  test("Phone tab can enable the companion gateway", async () => {
+    const getCompanionState = vi.fn(async () => ({
+      enabled: false,
+      listening: false,
+      port: 17890,
+      token: "tok",
+      urls: [],
+    }));
+    const setCompanionEnabled = vi.fn(async () => ({
+      enabled: true,
+      listening: true,
+      port: 17890,
+      token: "tok",
+      urls: [{ kind: "lan" as const, origin: "http://192.168.1.23:17890", label: "Local network" }],
+      qrDataUrl: "data:image/png;base64,qq",
+    }));
+
+    render(
+      <SettingsDialog
+        open
+        models={[]}
+        model=""
+        thinkingLevel="medium"
+        onModelSelect={vi.fn()}
+        onThinkingLevel={vi.fn()}
+        onClose={vi.fn()}
+        getCompanionState={getCompanionState}
+        setCompanionEnabled={setCompanionEnabled}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: /phone/i }));
+    const toggle = await screen.findByRole("switch", { name: /allow phone/i });
+    fireEvent.click(toggle);
+    await waitFor(() => expect(setCompanionEnabled).toHaveBeenCalledWith(true));
+    expect(await screen.findByText(/192\.168\.1\.23:17890/)).toBeInTheDocument();
+  });
 });

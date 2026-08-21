@@ -55,6 +55,7 @@ function mirrorForeground(state: AppState, key: string | undefined): AppState {
   return {
     ...state,
     session: view.session,
+    models: view.models,
     timeline: view.timeline,
     toolCalls: view.toolCalls,
     queue: view.queue,

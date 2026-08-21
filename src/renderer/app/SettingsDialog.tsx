@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
+  CompanionState,
   McpConfigView,
   ModelOption,
   ProviderAuthStatus,
@@ -11,7 +12,7 @@ import { AppIcon } from "../ui/icons";
 import { Dialog } from "../ui/Dialog";
 import { OAuthProgressPanel } from "./OAuthPanel";
 
-type SettingsTab = "general" | "providers" | "mcp";
+type SettingsTab = "general" | "providers" | "mcp" | "phone";
 
 export function SettingsDialog({
   open,
@@ -35,6 +36,9 @@ export function SettingsDialog({
   setMcpServerEnabled,
   importCursorMcp,
   openMcpConfigFile,
+  getCompanionState,
+  setCompanionEnabled,
+  rotateCompanionToken,
 }: {
   open: boolean;
   models: ModelOption[];
@@ -66,6 +70,9 @@ export function SettingsDialog({
   importCursorMcp?: () => Promise<{ imported: string[]; skipped: string[] }>;
   /** Open the project MCP override file in the default editor. */
   openMcpConfigFile?: () => Promise<void>;
+  getCompanionState?: () => Promise<CompanionState>;
+  setCompanionEnabled?: (enabled: boolean) => Promise<CompanionState>;
+  rotateCompanionToken?: () => Promise<CompanionState>;
 }) {
   const [tab, setTab] = useState<SettingsTab>("general");
   const [providers, setProviders] = useState<ProviderAuthStatus[]>([]);
@@ -77,6 +84,8 @@ export function SettingsDialog({
   const [actionMessage, setActionMessage] = useState<string | undefined>();
   const [mcpConfig, setMcpConfig] = useState<McpConfigView | undefined>();
   const [mcpError, setMcpError] = useState<string | undefined>();
+  const [companion, setCompanion] = useState<CompanionState | undefined>();
+  const [companionBusy, setCompanionBusy] = useState(false);
 
   const providerLogins = useAppStore((state) => state.providerLogins);
   const clearProviderLogin = useAppStore((state) => state.clearProviderLogin);
@@ -179,6 +188,54 @@ export function SettingsDialog({
     }
   };
 
+  const refreshCompanion = useCallback(async () => {
+    if (!getCompanionState) {
+      setCompanion(undefined);
+      return;
+    }
+    try {
+      setCompanion(await getCompanionState());
+    } catch (error) {
+      setCompanion({
+        enabled: false,
+        listening: false,
+        port: 17890,
+        token: "",
+        urls: [],
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, [getCompanionState]);
+
+  const toggleCompanion = async (enabled: boolean) => {
+    if (!setCompanionEnabled) return;
+    setCompanionBusy(true);
+    try {
+      setCompanion(await setCompanionEnabled(enabled));
+    } catch (error) {
+      setCompanion((current) => ({
+        enabled: false,
+        listening: false,
+        port: current?.port ?? 17890,
+        token: current?.token ?? "",
+        urls: current?.urls ?? [],
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    } finally {
+      setCompanionBusy(false);
+    }
+  };
+
+  const rotateCompanion = async () => {
+    if (!rotateCompanionToken) return;
+    setCompanionBusy(true);
+    try {
+      setCompanion(await rotateCompanionToken());
+    } finally {
+      setCompanionBusy(false);
+    }
+  };
+
   useEffect(() => {
     if (!open) {
       setTab("general");
@@ -208,7 +265,10 @@ export function SettingsDialog({
     if (tab === "mcp") {
       void refreshMcpConfig();
     }
-  }, [open, tab, refreshProviders, refreshMcpConfig, clearProviderLogin]);
+    if (tab === "phone") {
+      void refreshCompanion();
+    }
+  }, [open, tab, refreshProviders, refreshMcpConfig, refreshCompanion, clearProviderLogin]);
 
   const selected = useMemo(
     () => providers.find((provider) => provider.id === selectedId),
@@ -317,6 +377,10 @@ export function SettingsDialog({
       title: "MCP",
       subtitle: "Manage project tools and Model Context Protocol servers.",
     },
+    phone: {
+      title: "Phone",
+      subtitle: "Pair a phone on this Wi-Fi. Tailscale uses the same gateway later.",
+    },
   };
 
   return (
@@ -389,6 +453,19 @@ export function SettingsDialog({
               <span className="settings-tab-copy">
                 <span>MCP</span>
                 <small>Project tools</small>
+              </span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "phone"}
+              className={`settings-tab ${tab === "phone" ? "active" : ""}`}
+              onClick={() => setTab("phone")}
+            >
+              <AppIcon name="globe" size="sm" />
+              <span className="settings-tab-copy">
+                <span>Phone</span>
+                <small>Android companion</small>
               </span>
             </button>
           </div>
@@ -676,6 +753,68 @@ export function SettingsDialog({
               )}
             </section>
           )}
+
+          {tab === "phone" && (
+            <section className="settings-section">
+              <div className="settings-section-label">Companion</div>
+              <div className="settings-field">
+                <div className="settings-field-meta">
+                  <label>Allow phone connection</label>
+                  <span>Opens a local gateway on port {companion?.port ?? 17890}. Same Wi-Fi first; Tailscale is the same URL later.</span>
+                </div>
+                <button
+                  type="button"
+                  className={`settings-motion-toggle ${companion?.enabled ? "is-on" : ""}`}
+                  role="switch"
+                  aria-label="Allow phone connection"
+                  aria-checked={companion?.enabled === true}
+                  disabled={companionBusy || !setCompanionEnabled}
+                  onClick={() => void toggleCompanion(!(companion?.enabled ?? false))}
+                >
+                  <span className="settings-motion-track" aria-hidden="true">
+                    <span className="settings-motion-thumb" />
+                  </span>
+                  <span className="settings-motion-state">{companion?.enabled ? "On" : "Off"}</span>
+                </button>
+              </div>
+              {companion?.error && <p className="settings-providers-error">{companion.error}</p>}
+              {companion?.enabled && (
+                <>
+                  {companion.qrDataUrl && (
+                    <div className="settings-companion-qr">
+                      <img src={companion.qrDataUrl} alt="Pairing QR code" width={220} height={220} />
+                      <p>Scan with the phone camera, or open a URL below.</p>
+                    </div>
+                  )}
+                  <ul className="settings-companion-urls">
+                    {companion.urls.map((url) => (
+                      <li key={url.origin}>
+                        <span>
+                          <small>{url.label}</small>
+                          <code>{url.origin}</code>
+                        </span>
+                        <button
+                          type="button"
+                          className="settings-provider-btn"
+                          onClick={() => void navigator.clipboard.writeText(`${url.origin}/?t=${companion.token}`)}
+                        >
+                          Copy
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  <button
+                    type="button"
+                    className="settings-provider-btn"
+                    disabled={companionBusy || !rotateCompanionToken}
+                    onClick={() => void rotateCompanion()}
+                  >
+                    Rotate pairing token
+                  </button>
+                </>
+              )}
+            </section>
+          )}
         </div>
 
         <div className="settings-footer">
@@ -683,7 +822,9 @@ export function SettingsDialog({
             ? "Switch model and effort from the chatbox right before you send."
             : tab === "providers"
               ? "Choose a provider from the dropdown, then connect with an API key or an account."
-              : "Servers come from standard mcp.json files; the desktop writes per-project overrides."}
+              : tab === "phone"
+                ? "The computer must stay awake. Do not expose this port on the public internet."
+                : "Servers come from standard mcp.json files; the desktop writes per-project overrides."}
         </div>
     </Dialog>
   );

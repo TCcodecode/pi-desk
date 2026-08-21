@@ -278,10 +278,17 @@ export class PiHost {
     return this.snapshot({ includeTimeline: opts?.includeTimeline });
   }
 
-  previewSession(options: { cwd: string; sessionPath: string; tailTurns?: number }): PiSnapshot {
+  async previewSession(options: { cwd: string; sessionPath: string; tailTurns?: number }): Promise<PiSnapshot> {
     this.workspaceCwd = options.cwd;
     addProject(options.cwd);
     setActiveProject(options.cwd);
+    // Previewing a historical session keeps the UI alive without starting a full
+    // runtime, but the model picker must still reflect the configured providers.
+    // Populate the cache from the dedicated auth runtime when it is empty (e.g.
+    // right after boot, before any live session has resolved models).
+    if (this.availableModelsCache.length === 0) {
+      await this.refreshAvailableModelsFromAuth();
+    }
     const tail = readSessionTail(options.sessionPath, options.tailTurns);
     const modelKey = tail.model?.provider && tail.model.id
       ? `${tail.model.provider}/${tail.model.id}`
@@ -440,6 +447,9 @@ export class PiHost {
     if (slot.modeState.mode === "plan" && /^\/[A-Za-z0-9_-]+(?:\s|$)/.test(text.trim())) {
       throw new Error("Commands are unavailable in Plan mode; use the plan editor or switch to Execute");
     }
+    // Apply any mode/model/effort change recorded while a previous turn was
+    // still streaming so this turn starts with the newly selected profile.
+    await this.applyPendingMode(slot);
     // Resolve as soon as the message is accepted (preflight passes, turn starts)
     // instead of waiting for the whole agent turn, so the composer can clear the
     // input immediately. Turn errors after acceptance surface as session_error.
@@ -655,14 +665,21 @@ export class PiHost {
 
   async setMode(mode: AgentMode, opts?: SessionCommandOptions): Promise<SessionModeState> {
     const slot = this.requireSlot(opts?.sessionKey);
-    if (slot.runtime.session.isStreaming) throw new Error("Stop the current turn before changing mode");
     // Capture the currently enabled tools immediately before entering Plan.
     // They are restored exactly when returning to Execute.
     const executeToolNames = mode === "plan" && slot.modeState.mode !== "plan"
       ? this.executeToolNames(slot)
       : slot.modeState.executeToolNames;
     slot.modeState = { ...slot.modeState, mode, executeToolNames };
-    await this.applyModeRuntime(slot, { persist: true });
+    if (slot.runtime.session.isStreaming) {
+      // Record the switch but let the running turn finish untouched. The new
+      // mode (tool policy included) takes effect on the next turn.
+      slot.pendingModeApply = true;
+      slot.planStore.setMode(this.modeStorageKey(slot), slot.modeState);
+    } else {
+      await this.applyModeRuntime(slot, { persist: true });
+      slot.pendingModeApply = false;
+    }
     this.emit("mode_changed", slot.modeState, undefined, slot.key);
     this.emitPlanArtifactChanged(slot);
     return slot.modeState;
@@ -673,7 +690,6 @@ export class PiHost {
     if (!slot) {
       return defaultModeState(profile.modelKey, profile.thinkingLevel);
     }
-    if (slot.runtime.session.isStreaming) throw new Error("Stop the current turn before changing the model profile");
     const model = profile.modelKey
       ? this.resolveModel(slot.runtime.session, profile.modelKey)
       : undefined;
@@ -686,8 +702,19 @@ export class PiHost {
       ...slot.modeState,
       [mode === "plan" ? "planProfile" : "executeProfile"]: { ...profile },
     };
-    if (mode === slot.modeState.mode) await this.applyModeRuntime(slot, { persist: true });
-    else slot.planStore.setMode(this.modeStorageKey(slot), slot.modeState);
+    if (mode === slot.modeState.mode) {
+      if (slot.runtime.session.isStreaming) {
+        // Record the new model/effort but leave the running turn untouched.
+        // It is applied when the turn ends (next turn uses the new profile).
+        slot.pendingModeApply = true;
+        slot.planStore.setMode(this.modeStorageKey(slot), slot.modeState);
+      } else {
+        await this.applyModeRuntime(slot, { persist: true });
+        slot.pendingModeApply = false;
+      }
+    } else {
+      slot.planStore.setMode(this.modeStorageKey(slot), slot.modeState);
+    }
     this.emit("mode_changed", slot.modeState, undefined, slot.key);
     return slot.modeState;
   }
@@ -913,7 +940,10 @@ export class PiHost {
     const session = this.runtime?.session;
     const modelRuntime = session?.modelRuntime;
     if (!modelRuntime) {
-      this.availableModelsCache = [];
+      // No live slot yet (e.g. right after boot). Resolve models from the
+      // dedicated auth runtime so the picker still shows configured providers
+      // before the first session has been started.
+      await this.refreshAvailableModelsFromAuth();
       return this.availableModelsCache;
     }
 
@@ -1006,6 +1036,47 @@ export class PiHost {
     }));
 
     return this.availableModelsCache;
+  }
+
+  /**
+   * Populate the available-model cache from the dedicated auth runtime, used when no
+   * live session runtime is present (e.g. previewing a historical session before any
+   * session has resolved models). Mirrors the filtering in refreshAvailableModels and the
+   * dedicated runtime used by Settings → Providers, so the model picker reflects the
+   * same configured providers (auth.json / env) the Providers tab shows.
+   */
+  private async refreshAvailableModelsFromAuth(): Promise<void> {
+    try {
+      const runtime = await this.createAuthModelRuntime();
+      const raw = [...(await runtime.getAvailable())];
+      const intentional = this.intentionalProviders();
+      const filtered =
+        intentional.size > 0
+          ? raw.filter((model) => intentional.has(model.provider ?? ""))
+          : raw;
+      const enabledPatterns = this.readSettingsEnabledModels();
+      const matched =
+        enabledPatterns && enabledPatterns.length > 0
+          ? filtered.filter((model) => this.matchesEnabledModel(model, enabledPatterns))
+          : filtered;
+      const seen = new Set<string>();
+      this.availableModelsCache = matched
+        .filter((model) => {
+          const key = `${model.provider ?? "unknown"}/${model.id ?? "unknown"}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .map((model) => ({
+          id: `${model.provider ?? "unknown"}/${model.id ?? "unknown"}`,
+          provider: model.provider ?? "unknown",
+          label: model.name ?? model.id ?? "unknown",
+          available: true,
+          thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+        }));
+    } catch {
+      // The dedicated auth runtime is best-effort; keep the existing cache on failure.
+    }
   }
 
   /**
@@ -2101,6 +2172,26 @@ export class PiHost {
   }
 
   /**
+   * Apply a mode/model/effort change that was recorded while a turn was
+   * streaming. Runs once the turn ends so the running turn is never mutated
+   * and the next turn uses the newly selected profile.
+   */
+  private async applyPendingMode(slot: RuntimeSlot): Promise<void> {
+    if (!slot.pendingModeApply || slot.runtime.session.isStreaming) return;
+    slot.pendingModeApply = false;
+    try {
+      await this.applyModeRuntime(slot, { persist: true });
+    } catch (error) {
+      this.emit(
+        "session_error",
+        { message: error instanceof Error ? error.message : String(error) },
+        undefined,
+        slot.key,
+      );
+    }
+  }
+
+  /**
    * A turn that finishes normally should leave the checklist consistent. The
    * model often plans tasks with todowrite but forgets to close its
    * in_progress item, so the panel would keep showing stale "0/N done". Close
@@ -2139,6 +2230,7 @@ export class PiHost {
       applyTodosFromToolResult: (nextSlot, toolName, result, isError) => this.applyTodosFromToolResult(nextSlot, toolName, result, isError),
       maybeNudgeForTodos: (nextSlot) => this.maybeNudgeForTodos(nextSlot),
       reconcileTodosAfterTurn: (nextSlot) => this.reconcileTodosAfterTurn(nextSlot),
+      applyPendingMode: (nextSlot) => void this.applyPendingMode(nextSlot),
     });
   }
 

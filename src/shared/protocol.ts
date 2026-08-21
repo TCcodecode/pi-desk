@@ -29,8 +29,10 @@ import type {
   ToolOption,
 } from "./session.js";
 import type { ProjectFileEntry, ProjectSummary } from "./workspace.js";
+import type { CompanionState } from "./companion.js";
 
 export * from "./app.js";
+export * from "./companion.js";
 export * from "./http.js";
 export * from "./provider.js";
 export * from "./session.js";
@@ -245,6 +247,9 @@ export interface PiApi {
   downloadUpdate(): Promise<void>;
   installUpdate(): Promise<void>;
   onUpdateState(listener: (state: AppUpdateState) => void): () => void;
+  getCompanionState(): Promise<CompanionState>;
+  setCompanionEnabled(enabled: boolean): Promise<CompanionState>;
+  rotateCompanionToken(): Promise<CompanionState>;
   http?: HttpApi;
   onEvent(listener: (event: PiEvent) => void): () => void;
 }

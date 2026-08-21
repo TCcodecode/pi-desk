@@ -37,6 +37,28 @@ describe("SessionView", () => {
     expect(next?.timeline).toEqual([]);
   });
 
+  test("session_started resumes a cold preview without wiping its history or models", () => {
+    const view = createView("k", { hydrate: "ready", session: { sessionId: "s1" } });
+    view.timeline = [{ id: "t0", kind: "user", content: "hello", status: "completed" }];
+    view.models = [{ id: "deepseek/deepseek-v4-flash", provider: "deepseek", label: "DeepSeek V4 Flash", available: true, thinkingLevels: [] }];
+    view.cold = true;
+    const next = applyEventToView(view, started("k"));
+    expect(next?.hydrate).toBe("ready");
+    expect(next?.timeline).toEqual(view.timeline);
+    expect(next?.models).toEqual(view.models);
+    expect(next?.cold).toBe(false);
+    expect(next?.session.sessionId).toBe("s1");
+  });
+
+  test("session_started resets a ready view when a different session takes over the key", () => {
+    const view = createView("k", { hydrate: "ready", session: { sessionId: "old" } });
+    view.timeline = [{ id: "t0", kind: "user", content: "hello", status: "completed" }];
+    const next = applyEventToView(view, started("k"));
+    expect(next?.hydrate).toBe("ready");
+    expect(next?.timeline).toEqual([]);
+    expect(next?.session.sessionId).toBe("s1");
+  });
+
   test("applySnapshotToView marks ready and records oldestId", () => {
     const view = createView("k", { hydrate: "loading" });
     const snap = {

@@ -147,6 +147,8 @@ export interface RuntimeSlot {
   runToolCount: number;
   sessionGeneration: number;
   status: SessionStatus;
+  /** Mode/model changed mid-turn; apply it once the running turn ends. */
+  pendingModeApply?: boolean;
   pendingFileMutations: Map<string, { path: string; absolutePath: string; before?: string }>;
   completedFileMutations: Map<string, { path: string; absolutePath: string; before?: string; after?: string }>;
   modeState: SessionModeState;

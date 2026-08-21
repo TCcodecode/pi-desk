@@ -276,8 +276,8 @@ export function App() {
     const wrap = timelineWrapRef.current;
     stickToBottomRef.current = true;
     setScrolledFromBottom(false);
-    if (wrap) wrap.scrollTo({ top: wrap.scrollHeight, behavior: "smooth" });
-  }, []);
+    if (wrap) wrap.scrollTo({ top: wrap.scrollHeight, behavior: motionEnabled ? "smooth" : "auto" });
+  }, [motionEnabled]);
 
   const patchTabStatus = useCallback((sessionKey: string, status: SessionStatus) => {
     useWorkspaceStore.getState().patchStatus(sessionKey, status);
@@ -878,6 +878,7 @@ export function App() {
             >
               <AppIcon name="chevronDown" size="sm" />
               Latest
+              <span className="sr-only">New activity is available below.</span>
             </button>
           )}
         </div>
@@ -1009,6 +1010,9 @@ export function App() {
         setMcpServerEnabled={api?.setMcpServerEnabled ? (name, enabled) => api.setMcpServerEnabled(name, enabled) : undefined}
         importCursorMcp={api?.importCursorMcp ? () => api.importCursorMcp() : undefined}
         openMcpConfigFile={api?.openMcpConfigFile ? () => api.openMcpConfigFile() : undefined}
+        getCompanionState={api?.getCompanionState ? () => api.getCompanionState() : undefined}
+        setCompanionEnabled={api?.setCompanionEnabled ? (enabled) => api.setCompanionEnabled(enabled) : undefined}
+        rotateCompanionToken={api?.rotateCompanionToken ? () => api.rotateCompanionToken() : undefined}
       />
       <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} diagnostics={state.diagnostics} />
     </main>

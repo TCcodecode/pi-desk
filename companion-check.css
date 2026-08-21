@@ -1,0 +1,180 @@
+/* src/renderer/companion/styles.css */
+:root {
+  --font-ui:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  --font-mono:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
+  --surface-center: #ffffff;
+  --surface-sidebar: #f5f5f5;
+  --surface-elevated: #ffffff;
+  --surface-code: #f7f7f7;
+  --border-subtle: #e5e5e5;
+  --text-primary: #3d3d3d;
+  --text-secondary: #6f6f6f;
+  --accent-primary: #202020;
+  --accent-soft: #eeeeee;
+  --success: #21864b;
+  --danger: #c94b42;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  min-height: 100%;
+  min-width: 0;
+  overflow: auto;
+}
+body {
+  margin: 0;
+  min-width: 0;
+  background: var(--surface-center);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+}
+.companion-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100svh;
+  min-width: 0;
+  background: var(--surface-center);
+  color: var(--text-primary);
+}
+.companion-status {
+  padding: 10px 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.companion-status strong {
+  color: var(--success);
+}
+.companion-status.is-down strong {
+  color: var(--danger);
+}
+.companion-main {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 16px 88px;
+}
+.companion-composer {
+  position: sticky;
+  bottom: 56px;
+  display: flex;
+  gap: 8px;
+  padding: 8px 0 0;
+  background: var(--surface-center);
+}
+.companion-composer textarea {
+  flex: 1;
+  min-height: 44px;
+  max-height: 120px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  font: inherit;
+  font-size: 16px;
+  resize: vertical;
+}
+.companion-composer button,
+.companion-toolbar button,
+.companion-tabs button {
+  border: 0;
+  background: var(--accent-primary);
+  color: #fff;
+  border-radius: 12px;
+  padding: 10px 14px;
+  font: inherit;
+  font-weight: 600;
+}
+.companion-toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.companion-toolbar select,
+.companion-list button {
+  font: inherit;
+  font-size: 14px;
+}
+.companion-tabs {
+  position: sticky;
+  bottom: 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
+  background: var(--surface-sidebar);
+  border-top: 1px solid var(--border-subtle);
+}
+.companion-tabs button {
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 10px 4px;
+}
+.companion-tabs button.active {
+  color: var(--text-primary);
+  background: var(--surface-elevated);
+}
+.companion-bubble {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--surface-code);
+  font-size: 15px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.companion-bubble.user {
+  background: var(--accent-soft);
+}
+.companion-tool {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  margin: 0 0 8px;
+}
+.companion-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.companion-list button {
+  text-align: left;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--surface-elevated);
+}
+.companion-diff {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  background: var(--surface-code);
+  padding: 10px;
+  border-radius: 10px;
+  overflow: auto;
+}
+.companion-preview {
+  width: 100%;
+  height: calc(100dvh - 120px);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--surface-center);
+}
+.companion-empty {
+  color: var(--text-secondary);
+  font-size: 14px;
+}

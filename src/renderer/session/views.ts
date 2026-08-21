@@ -1,4 +1,5 @@
 import type {
+  ModelOption,
   PiEvent,
   PiSnapshot,
   SessionState,
@@ -13,6 +14,7 @@ export interface SessionView {
   key: string;
   hydrate: ViewHydrate;
   session: SessionState;
+  models: ModelOption[];
   timeline: TimelineItem[];
   toolCalls: Record<string, ToolCallState>;
   queue: { steering: string[]; followUp: string[] };
@@ -39,6 +41,7 @@ export function createView(
       ...opts?.session,
       name: opts?.title ?? opts?.session?.name ?? base.session.name,
     },
+    models: base.models ?? [],
     timeline: [],
     toolCalls: {},
     queue: { steering: [], followUp: [] },
@@ -59,6 +62,7 @@ export function applySnapshotToView(view: SessionView, snap: PiSnapshot): Sessio
     ...view,
     hydrate: "ready",
     session: { ...view.session, ...snap.session },
+    models: snap.models && snap.models.length > 0 ? snap.models : view.models,
     timeline,
     toolCalls: keepTimeline ? view.toolCalls : (snap.toolCalls ?? {}),
     queue: snap.queue ?? view.queue,
@@ -89,6 +93,16 @@ export function applyEventToView(view: SessionView | undefined, event: PiEvent):
       return { ...view, session: head };
     }
     if (view.hydrate === "ready") {
+      // Resuming a cold file-tail preview into a live slot: the hydrated
+      // timeline and model list already belong to this same session, so keep
+      // them instead of resetting. A genuinely different session starting in
+      // this view (rare) still resets.
+      const resumed =
+        Boolean(view.session.sessionId) &&
+        view.session.sessionId === head.sessionId;
+      if (resumed) {
+        return { ...view, session: head, cold: false };
+      }
       return {
         ...createView(view.key, { hydrate: "ready", session: head }),
         session: head,

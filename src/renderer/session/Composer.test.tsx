@@ -301,6 +301,36 @@ describe("Composer", () => {
     expect(textbox.value).toContain("@session:/tmp/x/s.jsonl");
   });
 
+  test("navigates the reference picker from the textarea", () => {
+    const sessions = [
+      { sessionId: "s1", cwd: "/tmp/x", name: "alpha", status: "idle" as const, model: "auto", thinkingLevel: "medium" as const, sessionFile: "/tmp/x/a.jsonl", messageCount: 1, updatedAt: new Date().toISOString() },
+      { sessionId: "s2", cwd: "/tmp/x", name: "beta", status: "idle" as const, model: "auto", thinkingLevel: "medium" as const, sessionFile: "/tmp/x/b.jsonl", messageCount: 1, updatedAt: new Date().toISOString() },
+    ];
+    renderComposer({ sessions });
+
+    const textbox = screen.getByRole("textbox", { name: /message/i }) as HTMLTextAreaElement;
+    fireEvent.change(textbox, { target: { value: "check @" } });
+    expect(textbox).toHaveAttribute("aria-controls", "composer-reference-picker");
+    fireEvent.keyDown(textbox, { key: "ArrowDown" });
+    expect(textbox).toHaveAttribute("aria-activedescendant", "composer-reference-picker-option-1");
+    fireEvent.keyDown(textbox, { key: "Enter" });
+    expect(textbox.value).toContain("@session:/tmp/x/b.jsonl");
+  });
+
+  test("accepts image files dropped on the composer", async () => {
+    renderComposer();
+    const file = new File([new Uint8Array([1, 2, 3])], "dropped.png", { type: "image/png" });
+    Object.defineProperty(file, "path", { value: "/tmp/dropped.png" });
+    const card = document.querySelector(".composer-card")!;
+
+    fireEvent.dragOver(card, { dataTransfer: { types: ["Files"] } });
+    expect(card).toHaveClass("is-dragging");
+    fireEvent.drop(card, { dataTransfer: { files: [file] } });
+
+    expect(await screen.findByRole("img", { name: "dropped.png" })).toBeInTheDocument();
+    expect(card).not.toHaveClass("is-dragging");
+  });
+
   test("exposes model, thinking, workspace, and branch next to send", () => {
     const onModelSelect = vi.fn();
     const onThinkingLevel = vi.fn();

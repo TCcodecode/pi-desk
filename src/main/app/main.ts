@@ -10,6 +10,9 @@ import { setProjectCatalogPath } from "../workspace/projectCatalog.js";
 import { CodeIndexService } from "../session/indexService.js";
 import { sessionCompletionNotification, shouldNotifySessionCompleted } from "./notifications.js";
 import { HttpWorkbenchStore, setHttpWorkbenchUserDataPath } from "../http/store.js";
+import { CompanionGateway } from "../companion/gateway.js";
+import { createCompanionInvoker } from "../companion/invoker.js";
+import { companionStaticRoot } from "../companion/server.js";
 import { UpdateService } from "./updates.js";
 
 // The main bundle is ESM (electron-vite), where __dirname is not defined.
@@ -31,6 +34,7 @@ async function getGitBranch(cwd: string): Promise<string | undefined> {
 }
 
 let mainWindow: BrowserWindow | undefined;
+let companion: CompanionGateway | undefined;
 const updates = new UpdateService((state) => {
   BrowserWindow.getAllWindows().forEach((window) => window.webContents.send("pi:updateState", state));
 });
@@ -59,6 +63,9 @@ function registerPiIpc() {
   ipcMain.handle("pi:checkForUpdate", () => updates.check());
   ipcMain.handle("pi:downloadUpdate", () => updates.download());
   ipcMain.handle("pi:installUpdate", () => updates.install());
+  ipcMain.handle("pi:getCompanionState", () => companion?.getState() ?? { enabled: false, listening: false, port: 17890, token: "", urls: [] });
+  ipcMain.handle("pi:setCompanionEnabled", (_event, enabled: boolean) => companion?.setEnabled(enabled));
+  ipcMain.handle("pi:rotateCompanionToken", () => companion?.rotateToken());
   ipcMain.handle("pi:getSnapshot", async () => ({ ...piHost.snapshot(), sessions: await piHost.listSessions() }));
   ipcMain.handle("pi:chooseWorkspace", async () => {
     const result = await dialog.showOpenDialog({ properties: ["openDirectory"] });
@@ -429,6 +436,15 @@ app.whenReady().then(() => {
   }
   setProjectCatalogPath(currentProjects);
   setHttpWorkbenchUserDataPath(userDataDir);
+  companion = new CompanionGateway({
+    userDataDir,
+    invoke: createCompanionInvoker(piHost),
+    subscribe: (listener) => piHost.subscribe((event) => listener(event)),
+    staticRoot: companionStaticRoot(__dirname),
+    devProxyOrigin: process.env.ELECTRON_RENDERER_URL,
+    previewCwd: () => piHost.snapshot().session.cwd || undefined,
+  });
+  void companion.restore();
   installApplicationMenu();
   registerPiIpc();
   createWindow();
@@ -446,5 +462,6 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   indexService.dispose();
+  void companion?.stop();
   void piHost.dispose();
 });
